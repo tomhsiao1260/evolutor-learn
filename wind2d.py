@@ -1,4 +1,5 @@
 import sys
+import cv2
 import argparse
 import pathlib
 from PyQt5.QtWidgets import (
@@ -34,11 +35,22 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.viewer, 0, 0)
         self.viewer.setDefaults()
 
+        umbstr = parsed_args.umbilicus
+
         tifname = pathlib.Path(parsed_args.input_tif)
 
         print("loading tif", tifname)
         # loadTIFF also sets default umbilicus location
         self.viewer.loadTIFF(tifname)
+        if umbstr is not None:
+            words = umbstr.split(',')
+            if len(words) != 2:
+                print("Could not parse --umbilicus argument")
+            else:
+                self.viewer.umb = np.array((float(words[0]),float(words[1])))
+
+        print(self.viewer.umb)
+        self.viewer.drawAll()
 
 class ImageViewer(QLabel):
 
@@ -187,6 +199,10 @@ class ImageViewer(QLabel):
 
         outrgb = self.dataToZoomedRGB(self.image, alpha=main_alpha)
 
+        if self.umb is not None:
+            wumb = self.ixyToWxy(self.umb)
+            cv2.circle(outrgb, wumb, 3, (255,0,255), -1)
+
         bytesperline = 3*outrgb.shape[1]
         # print(outrgb.shape, outrgb.dtype)
         qimg = QImage(outrgb, outrgb.shape[1], outrgb.shape[0],
@@ -209,6 +225,16 @@ class ImageViewer(QLabel):
             "tab20": "seaborn:tab20",
             "hsv": "matlab:hsv",
             }
+
+    def ixyToWxy(self, ixy):
+        ix,iy = ixy
+        cx,cy = self.center
+        z = self.zoom
+        ww, wh = self.width(), self.height()
+        wcx, wcy = ww//2, wh//2
+        wx = int(z*(ix-cx)) + wcx
+        wy = int(z*(iy-cy)) + wcy
+        return (wx,wy)
 
 class Tinter():
 
