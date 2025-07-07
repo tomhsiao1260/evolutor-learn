@@ -11,9 +11,14 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import (
         QPoint,
         )
+from PyQt5.QtGui import (
+        QImage,
+        QPixmap,
+        )
 
 import cv2
 import numpy as np
+import cmap
 
 class MainWindow(QMainWindow):
 
@@ -75,6 +80,7 @@ class ImageViewer(QLabel):
         self.image_mtime = fname.stat().st_mtime
         self.setDefaults()
         self.umb = np.array((image.shape[1]/2, image.shape[0]/2))
+        self.drawAll()
 
     def setDefaults(self):
         if self.image is None:
@@ -103,6 +109,106 @@ class ImageViewer(QLabel):
             bw /= zoom/prev
             bh /= zoom/prev
             self.bar0 = (bw+cw, bh+ch)
+
+    # class function
+    def rectIntersection(ra, rb):
+        (ax1, ay1, ax2, ay2) = ra
+        (bx1, by1, bx2, by2) = rb
+        # print(ra, rb)
+        x1 = max(min(ax1, ax2), min(bx1, bx2))
+        y1 = max(min(ay1, ay2), min(by1, by2))
+        x2 = min(max(ax1, ax2), max(bx1, bx2))
+        y2 = min(max(ay1, ay2), max(by1, by2))
+        if (x1<x2) and (y1<y2):
+            r = (x1, y1, x2, y2)
+            # print(r)
+            return r
+
+    # input: 2D float array, range 0.0 to 1.0
+    # output: RGB array, uint8, with colors determined by the
+    # colormap and alpha, zoomed in based on the current
+    # window size, center, and zoom factor
+    def dataToZoomedRGB(self, data, alpha=1., colormap="gray", interpolation="linear", scale=1.):
+        if scale is None:
+            scale = 1.
+        if colormap in self.colormaps:
+            colormap = self.colormaps[colormap]
+        cm = cmap.Colormap(colormap, interpolation=interpolation)
+
+        iw = data.shape[1]
+        ih = data.shape[0]
+        z = self.zoom / scale
+        # zoomed image width, height:
+        ziw = max(int(z*iw), 1)
+        zih = max(int(z*ih), 1)
+        # viewing window width, height:
+        ww = self.width()
+        wh = self.height()
+        # print("di ww,wh",ww,wh)
+        # viewing window half width
+        whw = ww//2
+        whh = wh//2
+        cx,cy = self.center
+        cx *= scale
+        cy *= scale
+
+        # Pasting zoomed data slice into viewing-area array, taking
+        # panning into account.
+        # Need to calculate the interesection
+        # of the two rectangles: 1) the panned and zoomed slice, and 2) the
+        # viewing window, before pasting
+        ax1 = int(whw-z*cx)
+        ay1 = int(whh-z*cy)
+        ax2 = ax1+ziw
+        ay2 = ay1+zih
+        bx1 = 0
+        by1 = 0
+        bx2 = ww
+        by2 = wh
+        ri = ImageViewer.rectIntersection((ax1,ay1,ax2,ay2), (bx1,by1,bx2,by2))
+        outrgb = np.zeros((wh,ww,3), dtype=np.uint8)
+        if ri is not None:
+            (x1,y1,x2,y2) = ri
+            # zoomed data slice
+            x1s = int((x1-ax1)/z)
+            y1s = int((y1-ay1)/z)
+            x2s = int((x2-ax1)/z)
+            y2s = int((y2-ay1)/z)
+            zslc = cv2.resize(data[y1s:y2s,x1s:x2s], (x2-x1, y2-y1), interpolation=cv2.INTER_NEAREST)
+            cslc = cm(np.remainder(zslc, 1.))
+            outrgb[y1:y2, x1:x2, :] = (255*cslc[:,:,:3]*alpha).astype(np.uint8)
+        return outrgb
+
+    def drawAll(self):
+        if self.image is None:
+            return
+        total_alpha = .8
+        main_alpha = total_alpha
+
+        outrgb = self.dataToZoomedRGB(self.image, alpha=main_alpha)
+
+        bytesperline = 3*outrgb.shape[1]
+        # print(outrgb.shape, outrgb.dtype)
+        qimg = QImage(outrgb, outrgb.shape[1], outrgb.shape[0],
+                      bytesperline, QImage.Format_RGB888)
+        # print("created qimg")
+        pixmap = QPixmap.fromImage(qimg)
+        # print("created pixmap")
+        self.setPixmap(pixmap)
+        # print("set pixmap")
+
+    colormaps = {
+            "gray": "matlab:gray",
+            "viridis": "bids:viridis",
+            "bwr": "matplotlib:bwr",
+            "cool": "matlab:cool",
+            "bmr_3c": "chrisluts:bmr_3c",
+            "rainbow": "gnuplot:rainbow",
+            "spec11": "colorbrewer:Spectral_11",
+            "set12": "colorbrewer:Set3_12",
+            "tab20": "seaborn:tab20",
+            "hsv": "matlab:hsv",
+            }
 
 class Tinter():
 
