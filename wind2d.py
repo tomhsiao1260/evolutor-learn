@@ -2,16 +2,26 @@ import sys
 import argparse
 from PyQt5.QtWidgets import (
         QApplication,
+        QGridLayout,
+        QMainWindow,
         QWidget,
-        QPushButton,
-        QVBoxLayout,
-        QMessageBox,
         )
+
+class MainWindow(QMainWindow):
+
+    def __init__(self, app, parsed_args):
+        super(MainWindow, self).__init__()
+        self.app = app
+
+        grid = QGridLayout()
+        widget = QWidget()
+        widget.setLayout(grid)
+        self.setCentralWidget(widget)
 
 class Tinter():
 
     def __init__(self, app, parsed_args):
-        window = QWidget()
+        window = MainWindow(app, parsed_args)
         self.app = app
         self.window = window
         window.show()
