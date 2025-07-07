@@ -1,0 +1,8 @@
+numpy
+opencv-python
+scipy
+pynrrd
+scikit-image
+PyQt5
+streamlit
+cmap
