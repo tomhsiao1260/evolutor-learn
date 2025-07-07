@@ -1,5 +1,6 @@
 import sys
 import argparse
+import pathlib
 from PyQt5.QtWidgets import (
         QApplication,
         QGridLayout,
@@ -10,6 +11,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import (
         QPoint,
         )
+
+import cv2
+import numpy as np
 
 class MainWindow(QMainWindow):
 
@@ -24,6 +28,11 @@ class MainWindow(QMainWindow):
         self.viewer = ImageViewer(self)
         grid.addWidget(self.viewer, 0, 0)
 
+        tifname = pathlib.Path(parsed_args.input_tif)
+
+        print("loading tif", tifname)
+        # loadTIFF also sets default umbilicus location
+        self.viewer.loadTIFF(tifname)
 
 class ImageViewer(QLabel):
 
@@ -54,6 +63,17 @@ class ImageViewer(QLabel):
         self.src_dots = None
         self.dest_dots = None
 
+    def loadTIFF(self, fname):
+        try:
+            image = cv2.imread(str(fname), cv2.IMREAD_UNCHANGED).astype(np.float64)
+            image /= 65535.
+        except Exception as e:
+            print("Error while loading",fname,e)
+            return
+        self.image = image
+        self.image_mtime = fname.stat().st_mtime
+        self.umb = np.array((image.shape[1]/2, image.shape[0]/2))
+
 class Tinter():
 
     def __init__(self, app, parsed_args):
@@ -68,8 +88,8 @@ def process_cl_args():
     parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
             description="Test determining winding numbers using structural tensors")
-    # parser.add_argument("input_tif",
-    #                     help="input tiff slice")
+    parser.add_argument("input_tif",
+                        help="input tiff slice")
     parser.add_argument("--cache_dir",
                         default=None,
                         help="directory where the cache of the structural tensor data is or will be stored; if not given, directory of input tiff slice is used")
@@ -113,7 +133,7 @@ def process_cl_args():
     parsed_args = parser.parse_args()
     return parsed_args
 
-# python wind2d.py
+# python wind2d.py ./evol1/circle.tif --umbilicus 549,463
 if __name__ == '__main__':
     parsed_args = process_cl_args()
     qt_args = sys.argv[:1] 
