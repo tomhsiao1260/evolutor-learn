@@ -27,6 +27,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(widget)
         self.viewer = ImageViewer(self)
         grid.addWidget(self.viewer, 0, 0)
+        self.viewer.setDefaults()
 
         tifname = pathlib.Path(parsed_args.input_tif)
 
@@ -72,7 +73,36 @@ class ImageViewer(QLabel):
             return
         self.image = image
         self.image_mtime = fname.stat().st_mtime
+        self.setDefaults()
         self.umb = np.array((image.shape[1]/2, image.shape[0]/2))
+
+    def setDefaults(self):
+        if self.image is None:
+            return
+        ww = self.width()
+        wh = self.height()
+        # print("ww,wh",ww,wh)
+        iw = self.image.shape[1]
+        ih = self.image.shape[0]
+        self.center = (iw//2, ih//2)
+        zw = ww/iw
+        zh = wh/ih
+        zoom = min(zw, zh)
+        self.setZoom(zoom)
+        print("center",self.center[0],self.center[1],"zoom",self.zoom)
+
+    def setZoom(self, zoom):
+        # TODO: set min, max zoom
+        prev = self.zoom
+        self.zoom = zoom
+        if prev != 0:
+            bw,bh = self.bar0
+            cw,ch = self.center
+            bw -= cw
+            bh -= ch
+            bw /= zoom/prev
+            bh /= zoom/prev
+            self.bar0 = (bw+cw, bh+ch)
 
 class Tinter():
 
