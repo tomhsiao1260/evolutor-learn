@@ -3,8 +3,12 @@ import argparse
 from PyQt5.QtWidgets import (
         QApplication,
         QGridLayout,
+        QLabel,
         QMainWindow,
         QWidget,
+        )
+from PyQt5.QtCore import (
+        QPoint,
         )
 
 class MainWindow(QMainWindow):
@@ -17,6 +21,38 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         widget.setLayout(grid)
         self.setCentralWidget(widget)
+        self.viewer = ImageViewer(self)
+        grid.addWidget(self.viewer, 0, 0)
+
+
+class ImageViewer(QLabel):
+
+    def __init__(self, main_window):
+        super(ImageViewer, self).__init__()
+        self.setMouseTracking(True)
+        self.main_window = main_window
+        self.image = None
+        self.zoom = 1.
+        self.center = (0,0)
+        self.bar0 = (0,0)
+        self.mouse_start_point = QPoint()
+        self.center_start_point = None
+        self.is_panning = False
+        self.dip_bars_visible = True
+        self.warp_dot_size = 3
+        self.umb = None
+        self.overlays = []
+        self.overlay_data = None
+        self.overlay_name = ""
+        self.decimation = 1
+        self.overlay_colormap = "viridis"
+        self.overlay_interpolation = "linear"
+        self.overlay_maxrad = None
+        self.overlay_alpha = None
+        self.overlay_scale = None
+        self.overlay_defaults = None
+        self.src_dots = None
+        self.dest_dots = None
 
 class Tinter():
 
@@ -32,8 +68,8 @@ def process_cl_args():
     parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
             description="Test determining winding numbers using structural tensors")
-    parser.add_argument("input_tif",
-                        help="input tiff slice")
+    # parser.add_argument("input_tif",
+    #                     help="input tiff slice")
     parser.add_argument("--cache_dir",
                         default=None,
                         help="directory where the cache of the structural tensor data is or will be stored; if not given, directory of input tiff slice is used")
@@ -77,7 +113,7 @@ def process_cl_args():
     parsed_args = parser.parse_args()
     return parsed_args
 
-# python wind2d.py ./evol1/circle.tif --umbilicus 549,463
+# python wind2d.py
 if __name__ == '__main__':
     parsed_args = process_cl_args()
     qt_args = sys.argv[:1] 
