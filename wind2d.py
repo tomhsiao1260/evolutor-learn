@@ -38,9 +38,23 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.viewer, 0, 0)
         self.viewer.setDefaults()
 
-        umbstr = parsed_args.umbilicus
-
+        no_cache = parsed_args.no_cache
+        self.viewer.no_cache = no_cache
         tifname = pathlib.Path(parsed_args.input_tif)
+        cache_dir = parsed_args.cache_dir
+        decimation = parsed_args.decimation
+        self.viewer.decimation = decimation
+        umbstr = parsed_args.umbilicus
+        window_width = parsed_args.window
+
+        if cache_dir is None:
+            cache_dir = tifname.parent
+        else:
+            cache_dir = pathlib.Path(cache_dir)
+        cache_file_base = cache_dir / tifname.stem
+        self.viewer.cache_dir = cache_dir
+        self.viewer.cache_file_base = cache_file_base
+        # nrrdname = cache_dir / (tifname.with_suffix(".nrrd")).name
 
         print("loading tif", tifname)
         # loadTIFF also sets default umbilicus location
@@ -53,6 +67,17 @@ class MainWindow(QMainWindow):
                 self.viewer.umb = np.array((float(words[0]),float(words[1])))
 
         self.st = ST(self.viewer.image)
+
+        part = "_e.nrrd"
+        if decimation is not None and decimation > 1:
+            part = "_d%d%s"%(decimation, part)
+        if window_width is not None:
+            part = "_w%d%s"%(window_width, part)
+        nrrdname = cache_file_base.with_name(cache_file_base.name + part)
+        print(nrrdname)
+        if no_cache:
+            print("computing structural tensors")
+            # self.st.computeEigens()
 
         self.viewer.drawAll()
 
