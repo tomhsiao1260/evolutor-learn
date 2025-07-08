@@ -24,7 +24,7 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - setZoom: Update the zoom value.  
 - rectIntersection: Calculate the visible area in the view.  
 - dataToZoomedRGB: Generate the color image to render in the view area after color mapping.  
-- drawAll: Render the image on the PyQt5 application via QImage.  
+- drawAll: Core rendering logic. Render the image on the PyQt5 application via QImage.  
 - ixyToWxy: Convert absolute coordinates to window display coordinates.
 
 ### process_cl_args
@@ -41,6 +41,19 @@ Core logic of the structure tensor.
 ### ST
 
 - saveImage: Save the image file.  
-- computeEigens: Calculate the related eigenvalues of the image, including lambda_u, lambda_v, vector_u, vector_v, and grad.  
+- computeEigens: Calculate the related eigenvalues of the image, including `lambda_u`, `lambda_v`, `vector_u`, `vector_v`, and `grad`.  
 - saveEigens: Combine related eigenvalues and save as an NRRD file.  
-- loadEigens: Load eigenvalue data from an NRRD file.
+- loadEigens: Load eigenvalue data from an NRRD file (e.g. ``.._e.nrrd`).
+- loadOrCreateEigens: Logic handling (load, save, compute).
+
+
+### Eigenvalues Info
+
+- `lambda_u` (1-dim) is the max eigenvalues of eigenvectors `vector_u` (2-dim)
+- `lambda_v` (1-dim) is the min eigenvalues of eigenvectors `vector_v` (2-dim)
+- `grad` is the gradient vector with Gaussian filter (2-dim)
+
+- `isotropy` metric (1-dim) is between 0 (edge) and 1 (random). Formula: `lv / lu`
+- `linearity` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `(lu - lv) / lu`
+- `coherence` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `coherence = ((lu - lv) / (lu + lv)) ** 2`
+

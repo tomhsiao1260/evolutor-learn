@@ -74,7 +74,6 @@ class MainWindow(QMainWindow):
         if window_width is not None:
             part = "_w%d%s"%(window_width, part)
         nrrdname = cache_file_base.with_name(cache_file_base.name + part)
-        print(nrrdname, no_cache)
         if no_cache:
             print("computing structural tensors")
             self.st.computeEigens()

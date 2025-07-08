@@ -198,7 +198,6 @@ class ST(object):
         self.linearity = linearity
         self.coherence = coherence
 
-        print(self.image.shape, lu.shape, lv.shape, vu.shape, vv.shape, grad.shape, isotropy.shape, linearity.shape, coherence.shape)
         '''
         print(lu[499:501,469:471])
         print(lv[499:501,469:471])
