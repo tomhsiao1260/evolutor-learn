@@ -2,6 +2,9 @@ import sys
 import cv2
 import argparse
 import pathlib
+
+from st import ST
+
 from PyQt5.QtWidgets import (
         QApplication,
         QGridLayout,
@@ -49,7 +52,8 @@ class MainWindow(QMainWindow):
             else:
                 self.viewer.umb = np.array((float(words[0]),float(words[1])))
 
-        print(self.viewer.umb)
+        self.st = ST(self.viewer.image)
+
         self.viewer.drawAll()
 
 class ImageViewer(QLabel):
