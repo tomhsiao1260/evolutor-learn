@@ -2,6 +2,7 @@ import sys
 import cv2
 import argparse
 import pathlib
+import math
 
 from st import ST
 
@@ -29,6 +30,7 @@ class MainWindow(QMainWindow):
     def __init__(self, app, parsed_args):
         super(MainWindow, self).__init__()
         self.app = app
+        self.st = None
 
         grid = QGridLayout()
         widget = QWidget()
@@ -229,6 +231,66 @@ class ImageViewer(QLabel):
         main_alpha = total_alpha
 
         outrgb = self.dataToZoomedRGB(self.image, alpha=main_alpha)
+        st = self.main_window.st
+
+        ww = self.width()
+        wh = self.height()
+
+        scale = 1.
+
+        if st is not None and self.dip_bars_visible and scale == 1:
+            dh = 15
+            w0i,h0i = self.wxyToIxy((0,0))
+            w0i -= self.bar0[0]
+            h0i -= self.bar0[1]
+            dhi = 2*dh/self.zoom
+            w0i = int(math.floor(w0i/dhi))*dhi
+            h0i = int(math.floor(h0i/dhi))*dhi
+            w0i += self.bar0[0]
+            h0i += self.bar0[1]
+            w0,h0 = self.ixyToWxy((w0i,h0i))
+            dpw = np.mgrid[h0:wh:2*dh, w0:ww:2*dh].transpose(1,2,0)
+            # switch from y,x to x,y coordinates
+            dpw = dpw[:,:,::-1]
+            # print ("dpw", dpw.shape, dpw.dtype, dpw[0,5])
+            dpi = self.wxysToIxys(dpw)
+            # interpolators expect y,x ordering
+            dpir = dpi[:,:,::-1]
+            # print ("dpi", dpi.shape, dpi.dtype, dpi[0,5])
+            uvs = st.vector_u_interpolator(dpir)
+            vvs = st.vector_v_interpolator(dpir)
+            # print("vvs", vvs.shape, vvs.dtype, vvs[0,5])
+            # coherence = st.coherence_interpolator(dpir)
+            coherence = st.linearity_interpolator(dpir)
+            # testing
+            # coherence[:] = .5
+            # print("coherence", coherence.shape, coherence.dtype, coherence[0,5])
+            linelen = 25.
+
+            lvecs = linelen*vvs*coherence[:,:,np.newaxis]
+            x0 = dpw
+            x1 = dpw+lvecs
+
+            lines = np.concatenate((x0,x1), axis=2)
+            lines = lines.reshape(-1,1,2,2).astype(np.int32)
+            # cv2.polylines(outrgb, lines, False, (255,255,0), 1)
+
+            lvecs = linelen*uvs*coherence[:,:,np.newaxis]
+
+            # x1 = dpw+lvecs
+            x1 = dpw+.6*lvecs
+            lines = np.concatenate((x0,x1), axis=2)
+            lines = lines.reshape(-1,1,2,2).astype(np.int32)
+            cv2.polylines(outrgb, lines, False, (0,255,0), 1)
+
+            xm = dpw-.5*lvecs
+            xp = dpw+.5*lvecs
+            lines = np.concatenate((xm,xp), axis=2)
+            lines = lines.reshape(-1,1,2,2).astype(np.int32)
+            # cv2.polylines(outrgb, lines, False, (0,255,0), 1)
+
+            points = dpw.reshape(-1,1,1,2).astype(np.int32)
+            cv2.polylines(outrgb, points, True, (0,255,255), 3)
 
         if self.umb is not None:
             wumb = self.ixyToWxy(self.umb)
@@ -266,6 +328,32 @@ class ImageViewer(QLabel):
         wx = int(z*(ix-cx)) + wcx
         wy = int(z*(iy-cy)) + wcy
         return (wx,wy)
+
+    def wxyToIxy(self, wxy):
+        wx,wy = wxy
+        ww,wh = self.width(), self.height()
+        wcx, wcy = ww//2, wh//2
+        dx,dy = wx-wcx, wy-wcy
+        cx,cy = self.center
+        z = self.zoom
+        ix = cx + dx/z
+        iy = cy + dy/z
+        return (ix, iy)
+
+    def wxysToIxys(self, wxys):
+        ww,wh = self.width(), self.height()
+        wcx, wcy = ww//2, wh//2
+
+        # dxys = wx-wcx, wy-wcy
+        dxys = wxys.copy()
+        dxys[...,0] -= wcx
+        dxys[...,1] -= wcy
+        cx,cy = self.center
+        z = self.zoom
+        ixys = np.zeros(wxys.shape)
+        ixys[...,0] = cx + dxys[...,0]/z
+        ixys[...,1] = cy + dxys[...,1]/z
+        return ixys
 
 class Tinter():
 

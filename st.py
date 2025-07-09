@@ -3,6 +3,7 @@ import math
 import cv2
 import numpy as np
 import nrrd
+from scipy.interpolate import RegularGridInterpolator
 
 class ST(object):
 
@@ -31,6 +32,76 @@ class ST(object):
         timage = (self.image*65535).astype(np.uint16)
         cv2.imwrite(str(fname), timage)
 
+    # Interpolate vectors that may have an ambiguous sign
+    # (such as ST eigenvectors).  When interpolating, make sure
+    # that adjacent vectors are consistently aligned.
+    def createVectorInterpolator(ar):
+
+        arh = ar.copy()
+        arh[arh[:,:,0]<0,:] *= -1
+        arv = ar.copy()
+        arv[arv[:,:,1]<0,:] *= -1
+        # print(arh[499:501,469:471])
+        # print(arv[499:501,469:471])
+        hinterp = RegularGridInterpolator((np.arange(ar.shape[0]), np.arange(ar.shape[1])), arh, method='linear', bounds_error=False, fill_value=0.)
+        vinterp = RegularGridInterpolator((np.arange(ar.shape[0]), np.arange(ar.shape[1])), arv, method='linear', bounds_error=False, fill_value=0.)
+        def vectorInterpolator(pts):
+            # print(pts.shape)
+            rh = hinterp(pts)
+            dh = (rh*rh).sum(axis=-1)
+            rv = vinterp(pts)
+            dv = (rv*rv).sum(axis=-1)
+            ro = rh.copy()
+            # print(ro.shape, dv.shape, (dv>dh).shape, ro[dv>dh].shape)
+            b = (dv>dh)
+            '''
+            if b.sum() > 0:
+                # print(b)
+                # print(b0)
+                print(rh[b][0])
+                print(dh[b][0])
+                print(rv[b][0])
+                print(dv[b][0])
+            '''
+            # if b.sum() > 0:
+            #     print(b.sum())
+            # print(b.shape)
+            # print(b)
+            # print(ro[b])
+            # b = b[:,:,np.newaxis]
+            # print(b.shape)
+            # print(ro[b].shape)
+            ro[b] = rv[b]
+            '''
+            if b.sum() > 0:
+                print(b.sum())
+                c = np.logical_and(b, (np.abs(ro[:,:,0]) > np.abs(ro[:,:,1])))
+                if c.sum() > 0:
+                    print(pts[c])
+                    print(rh[c])
+                    print(dh[c])
+                    print(rv[c])
+                    print(dv[c])
+                    print(ro[c])
+                    print
+            '''
+            '''
+            c = pts[:,:,0] > 499
+            c = np.logical_and(c, pts[:,:,0] < 501)
+            c = np.logical_and(c, pts[:,:,1] < 470)
+            # c = np.logical_and(c, pts[pts[:,:,0] < 501])
+            c = np.logical_and(c, (np.abs(ro[:,:,1] > .5*np.abs(ro[:,:,0]))))
+            if c.sum() > 0:
+                print(pts[c])
+                print(ro[c])
+                print(rh[c])
+                print(rv[c])
+            '''
+
+            return ro
+
+        return vectorInterpolator
+
     def saveEigens(self, fname):
         if self.lambda_u is None:
             print("saveEigens: eigenvalues not computed yet")
@@ -46,6 +117,45 @@ class ST(object):
         # turn off the default gzip compression
         header = {"encoding": "raw",}
         nrrd.write(str(fname), st_all, header, index_order='C')
+
+    # class function
+    def createInterpolator(ar):
+        interp = RegularGridInterpolator((np.arange(ar.shape[0]), np.arange(ar.shape[1])), ar, method='linear', bounds_error=False, fill_value=0.)
+        return interp
+
+    @property
+    def vector_u_interpolator(self):
+        if self.vector_u_interpolator_ is None:
+            print("create vui")
+            self.vector_u_interpolator_ = ST.createVectorInterpolator(self.vector_u)
+        return self.vector_u_interpolator_
+
+    @vector_u_interpolator.setter
+    def vector_u_interpolator(self, nv):
+        # if nv is not None:
+        #     raise ValueError("Value must be None")
+        print("replace vui")
+        self.vector_u_interpolator_ = nv
+
+    @property
+    def vector_v_interpolator(self):
+        if self.vector_v_interpolator_ is None:
+            print("create vvi")
+            self.vector_v_interpolator_ = ST.createVectorInterpolator(self.vector_v)
+        return self.vector_v_interpolator_
+
+    @vector_v_interpolator.setter
+    def vector_v_interpolator(self, nv):
+        # if nv is not None:
+        #     raise ValueError("Value must be None")
+        print("replace vvi")
+        self.vector_v_interpolator_ = nv
+
+    @property
+    def linearity_interpolator(self):
+        if self.linearity_interpolator_ is None:
+            self.linearity_interpolator_ = ST.createInterpolator(self.linearity)
+        return self.linearity_interpolator_
 
     def loadOrCreateEigens(self, fname):
         self.lambda_u = None
