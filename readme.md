@@ -57,3 +57,27 @@ Core logic of the structure tensor.
 - `linearity` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `(lu - lv) / lu`
 - `coherence` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `coherence = ((lu - lv) / (lu + lv)) ** 2`
 
+### Details
+
+- drawAll: Core rendering logic. Render the image on the PyQt5 application via QImage.
+
+A portion of the code will draw the calculated eigenvectors onto the original image, following a general method as outlined below:
+
+First, generate the coordinate arrays for the sampling points, `dpw` and `dpir`, then sample `vector_u`, `vector_v`, and `coherence` using the interpolator.
+```python
+uvs = st.vector_u_interpolator(dpir)
+vvs = st.vector_v_interpolator(dpir)
+coherence = st.linearity_interpolator(dpir)
+```
+
+Next, calculate the length of the normal vectors:
+```python
+lvecs = 25. * uvs * coherence[:, :, np.newaxis]
+```
+
+And calculate the length of the tangent vectors:
+```python
+lvecs = linelen * vvs * coherence[:, :, np.newaxis]
+```
+
+
