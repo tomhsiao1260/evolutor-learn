@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
         )
 from PyQt5.QtCore import (
         QPoint,
+        Qt,
         )
 from PyQt5.QtGui import (
         QImage,
@@ -84,6 +85,9 @@ class MainWindow(QMainWindow):
             self.st.loadOrCreateEigens(nrrdname)
 
         self.viewer.drawAll()
+
+    def keyPressEvent(self, e):
+        self.viewer.keyPressEvent(e)
 
 class ImageViewer(QLabel):
 
@@ -224,6 +228,11 @@ class ImageViewer(QLabel):
             outrgb[y1:y2, x1:x2, :] = (255*cslc[:,:,:3]*alpha).astype(np.uint8)
         return outrgb
 
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_W:
+            self.solveWindingOneStep()
+            self.drawAll()
+
     def drawAll(self):
         if self.image is None:
             return
@@ -354,6 +363,11 @@ class ImageViewer(QLabel):
         ixys[...,0] = cx + dxys[...,0]/z
         ixys[...,1] = cy + dxys[...,1]/z
         return ixys
+
+    # This is where the undeform operation takes place.
+    # The name of the function doesn't really make sense.
+    def solveWindingOneStep(self):
+        print('undeform operation start here')
 
 class Tinter():
 

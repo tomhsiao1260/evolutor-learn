@@ -57,9 +57,7 @@ Core logic of the structure tensor.
 - `linearity` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `(lu - lv) / lu`
 - `coherence` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `coherence = ((lu - lv) / (lu + lv)) ** 2`
 
-### Details
-
-- drawAll: Core rendering logic. Render the image on the PyQt5 application via QImage.
+### drawAll() Details
 
 A portion of the code will draw the calculated eigenvectors onto the original image, following a general method as outlined below:
 
