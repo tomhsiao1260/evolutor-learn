@@ -3,6 +3,7 @@ import cv2
 import argparse
 import pathlib
 import math
+from scipy import sparse
 
 from st import ST
 
@@ -367,7 +368,128 @@ class ImageViewer(QLabel):
     # This is where the undeform operation takes place.
     # The name of the function doesn't really make sense.
     def solveWindingOneStep(self):
-        print('undeform operation start here')
+        im = self.image
+        if im is None:
+            return
+
+        rad = self.createRadiusArray()
+
+        smoothing_weight = .1
+        rad0 = self.solveRadius0(rad, smoothing_weight)
+
+    def createRadiusArray(self):
+        umb = self.umb
+        im = self.image
+        iys, ixs = np.mgrid[:im.shape[0], :im.shape[1]]
+        # print("mg", ixs.shape, iys.shape)
+        # iys gives row ids, ixs gives col ids
+        radsq = (ixs-umb[0])*(ixs-umb[0])+(iys-umb[1])*(iys-umb[1])
+        rad = np.sqrt(radsq)
+        # print("rad", rad.shape)
+        return rad
+
+    def solveRadius0(self, basew, smoothing_weight):
+        st = self.main_window.st
+        decimation = self.decimation
+        print("rad0 smoothing", smoothing_weight)
+        print("decimation", decimation)
+
+        vecu = st.vector_u
+        coh = st.coherence[:,:,np.newaxis]
+        wvecu = coh*vecu
+        if decimation > 1:
+            wvecu = wvecu[::decimation, ::decimation, :]
+            basew = basew.copy()[::decimation, ::decimation]
+        shape = wvecu.shape[:2]
+        sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=True)
+
+    # set is_cross True if op is cross product, False if
+    # op is dot product
+    # Creates a sparse matrix that represents the operator
+    # vec2d cross grad  or  vec2d dot grad
+    # depending on the is_cross flag
+    @staticmethod
+    def sparseVecOpGrad(vec2d, is_cross):
+        # full number of rows, columns of image;
+        # it is assumed that the image and vec2d
+        # are the same size, except each vec2d element
+        # has 2 components.
+        nrf, ncf = vec2d.shape[:2]
+        nr = nrf-1
+        nc = ncf-1
+        n1df_flat = np.arange(nrf*ncf)
+        # nrf x ncf array where each element is a number
+        # representing the element's position in the array
+        n1df = np.reshape(n1df_flat, vec2d.shape[:2])
+        # No immediate effect, since n1df is a view of n1df_flat
+        n1df_flat = None
+        # n1d is like n1df but shrunk by 1 in row and column directions
+        n1d = n1df[:nr, :nc]
+        # No immediate effect, since n1d is a view of n1df
+        n1df = None
+        # flat array (size nrf-1 times ncf-1) where each element
+        # contains a position in the original nrf by ncf array. 
+        n1d_flat = n1d.flatten()
+        # No immediate effect, since n1d_flat is a view of n1d
+        n1d = None
+        # diag3 is the diagonal matrix of n1d_flat, in 3-column sparse format.
+        # float32 is not precise enough for carrying indices of large
+        # flat matrices, so use default (float64)
+        diag3 = np.stack((n1d_flat, n1d_flat, np.zeros(n1d_flat.shape)), axis=1)
+        # print("diag3", diag3.shape, diag3.dtype)
+        # clean up memory
+        n1d_flat = None
+
+        vec2d_flat = vec2d[:nr, :nc].reshape(-1, 2)
+        # print("vec2d_flat", vec2d_flat.shape)
+
+        dx0 = diag3.copy()
+
+        dx1 = diag3.copy()
+        dx1[:,1] += 1
+        if is_cross:
+            dx0[:,2] = vec2d_flat[:,1]
+            dx1[:,2] = -vec2d_flat[:,1]
+        else:
+            dx0[:,2] = -vec2d_flat[:,0]
+            dx1[:,2] = vec2d_flat[:,0]
+
+        ddx = np.concatenate((dx0, dx1), axis=0)
+        # print("ddx", ddx.shape, ddx.dtype)
+
+        # clean up memory
+        dx0 = None
+        dx1 = None
+
+        dy0 = diag3.copy()
+
+        dy1 = diag3.copy()
+        dy1[:,1] += ncf
+        if is_cross:
+            dy0[:,2] = -vec2d_flat[:,0]
+            dy1[:,2] = vec2d_flat[:,0]
+            pass
+        else:
+            dy0[:,2] = -vec2d_flat[:,1]
+            dy1[:,2] = vec2d_flat[:,1]
+
+        ddy = np.concatenate((dy0, dy1), axis=0)
+        # print("ddy", ddy.shape, ddy.dtype)
+
+        # clean up memory
+        dy0 = None
+        dy1 = None
+
+        # print("ddx,ddy", ddx.max(axis=0), ddy.max(axis=0))
+
+        uxg = np.concatenate((ddx, ddy), axis=0)
+        # print("uxg", uxg.shape, uxg.dtype, uxg[:,0].max(), uxg[:,1].max())
+        ddx = None
+        ddy = None
+        sparse_uxg = sparse.coo_array((uxg[:,2], (uxg[:,0], uxg[:,1])), shape=(nrf*ncf, nrf*ncf))
+        # sparse_uxg = sparse.csc_array((uxg[:,2], (uxg[:,0], uxg[:,1])), shape=(nrf*ncf, nrf*ncf))
+        # print("sparse_uxg", sparse_uxg.shape, sparse_uxg.dtype)
+        return sparse_uxg
 
 class Tinter():
 

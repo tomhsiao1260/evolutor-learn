@@ -1,13 +1,13 @@
-## Introduction
+# Introduction
 
 Learn from [evolutor](https://github.com/KhartesViewer/evolutor)
 
 
-## synth2d.py
+# synth2d.py
 
 Used to generate test TIFF data.
 
-## wind2d.py
+# wind2d.py
 
 Able to convert a specified TIFF image into a circular shape (requires center point umbilicus).
 
@@ -26,6 +26,10 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - dataToZoomedRGB: Generate the color image to render in the view area after color mapping.  
 - drawAll: Core rendering logic. Render the image on the PyQt5 application via QImage.  
 - ixyToWxy: Convert absolute coordinates to window display coordinates.
+- solveWindingOneStep: Core undeform operation logic.
+- createRadiusArray: Initial radius array (distance to umbilicus).
+- solveRadius0: Caculate pre-deformation radius array r0.
+- sparseVecOpGrad: sparse matrix that represents the operator vec2d cross grad or vec2d dot grad.
 
 ### process_cl_args
 
@@ -34,7 +38,7 @@ some input parameters
 - umbilicus: Coordinates of the circular center point.  
 - decimation: Default value is 8, representing sampling density.
 
-## st.py
+# st.py
 
 Core logic of the structure tensor.
 
@@ -46,8 +50,11 @@ Core logic of the structure tensor.
 - loadEigens: Load eigenvalue data from an NRRD file (e.g. ``.._e.nrrd`).
 - loadOrCreateEigens: Logic handling (load, save, compute).
 
+# Details
 
-### Eigenvalues Info
+More details for specific functions.
+
+### computeEigens()
 
 - `lambda_u` (1-dim) is the max eigenvalues of eigenvectors `vector_u` (2-dim)
 - `lambda_v` (1-dim) is the min eigenvalues of eigenvectors `vector_v` (2-dim)
@@ -57,7 +64,7 @@ Core logic of the structure tensor.
 - `linearity` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `(lu - lv) / lu`
 - `coherence` metric (1-dim) is between 0 (random) and 1 (edge). Formula: `coherence = ((lu - lv) / (lu + lv)) ** 2`
 
-### drawAll() Details
+### drawAll()
 
 A portion of the code will draw the calculated eigenvectors onto the original image, following a general method as outlined below:
 
