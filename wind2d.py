@@ -244,9 +244,28 @@ class ImageViewer(QLabel):
         else:
             self.overlays[index] = no
 
+    def getNextOverlay(self):
+        name = self.overlay_name
+
+        no = Overlay.findNextItem(self.overlays, name)
+        self.makeOverlayCurrent(no)
+
+    def makeOverlayCurrent(self, overlay):
+        self.saveCurrentOverlay()
+        self.overlay_data = overlay.data
+        self.overlay_name = overlay.name
+        self.overlay_colormap = overlay.colormap
+        self.overlay_interpolation = overlay.interpolation
+        self.overlay_maxrad = overlay.maxrad
+        self.overlay_alpha = overlay.alpha
+        self.overlay_scale = overlay.scale
+
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_W:
             self.solveWindingOneStep()
+            self.drawAll()
+        elif e.key() == Qt.Key_A:
+            self.getNextOverlay()
             self.drawAll()
 
     def drawAll(self):
@@ -701,6 +720,13 @@ class Overlay():
             if item.name == name:
                 return i
         return -1
+
+    @staticmethod
+    def findNextItem(overlays, cur_name):
+        index = Overlay.findIndexByName(overlays, cur_name)
+        if index < 0:
+            return overlays[0]
+        return overlays[(index+1)%len(overlays)]
 
 class Tinter():
 

@@ -106,19 +106,19 @@ Caculate pre-deformation radius array r0 (more description in original repo).
 ```markdown
 # r: initial radius
 # r0: pre-deformation radius
-r0 = r + r0\'
+r0 = r + r0'
 
 # constrain we need (r should align u)
 u cross (grad r0) = 0
 # thus
-u cross (grad r0\') = -u cross (grad r0)
+u cross (grad r0') = -u cross (grad r0)
 # solve Ax=b
 A: u cross grad operator
 b: -u cross (grad r0)
-x: r0\'
+x: r0'
 
 # then get the result r0
-r0 = r + r0\'
+r0 = r + r0'
 ```
 
 The matrix `A` and flatten vector `b` are constructed by stacking the results from the `sparseVecOpGrad` and `sparseGrad` methods. The `sparseUmbilical` is to ensure that the `r0` at the umbilicus is set to 0.
