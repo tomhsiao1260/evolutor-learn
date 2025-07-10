@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self.viewer.decimation = decimation
         umbstr = parsed_args.umbilicus
         window_width = parsed_args.window
+        maxrad = parsed_args.maxrad
 
         if cache_dir is None:
             cache_dir = tifname.parent
@@ -69,6 +70,11 @@ class MainWindow(QMainWindow):
                 print("Could not parse --umbilicus argument")
             else:
                 self.viewer.umb = np.array((float(words[0]),float(words[1])))
+        umb = self.viewer.umb
+        self.viewer.umb_maxrad = np.sqrt((umb*umb).sum())
+        if maxrad is None:
+            maxrad = self.viewer.umb_maxrad
+        self.viewer.overlay_maxrad = maxrad
 
         self.st = ST(self.viewer.image)
 
@@ -229,6 +235,15 @@ class ImageViewer(QLabel):
             outrgb[y1:y2, x1:x2, :] = (255*cslc[:,:,:3]*alpha).astype(np.uint8)
         return outrgb
 
+    def saveCurrentOverlay(self):
+        name = self.overlay_name
+        no = Overlay(name, self.overlay_data, self.overlay_maxrad, self.overlay_colormap, self.overlay_interpolation, self.overlay_alpha, self.overlay_scale)
+        index = Overlay.findIndexByName(self.overlays, name)
+        if index < 0:
+            self.overlays.append(no)
+        else:
+            self.overlays[index] = no
+
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_W:
             self.solveWindingOneStep()
@@ -376,6 +391,20 @@ class ImageViewer(QLabel):
 
         smoothing_weight = .1
         rad0 = self.solveRadius0(rad, smoothing_weight)
+
+        self.alignUVVec(rad0)
+
+        # copy uvec AFTER it has been aligned
+        st = self.main_window.st
+        uvec = st.vector_u.copy()
+        coh = st.coherence.copy()
+
+        self.overlay_data = rad0
+        self.overlay_name = "rad0"
+        self.overlay_colormap = "tab20"
+        self.overlay_interpolation = "nearest"
+        self.overlay_maxrad = self.umb_maxrad
+        self.saveCurrentOverlay()
 
     def createRadiusArray(self):
         umb = self.umb
@@ -633,6 +662,45 @@ class ImageViewer(QLabel):
         x = lu.solve(Atb)
         print("x", x.shape, x.dtype, x.min(), x.max())
         return x
+
+    # given an array filled with radius values, align
+    # the structure tensor u vector with the gradient of
+    # the radius
+    def alignUVVec(self, rad0):
+        st = self.main_window.st
+        uvec = st.vector_u
+        shape = uvec.shape[:2]
+        sparse_grad = self.sparseGrad(shape)
+        delr_flat = sparse_grad @ rad0.flatten()
+        delr = delr_flat.reshape(uvec.shape)
+        # print("delr", delr[iy,ix])
+        dot = (uvec*delr).sum(axis=2)
+        # print("dot", dot[iy,ix])
+        print("dots", (dot<0).sum())
+        print("not dots", (dot>=0).sum())
+        st.vector_u[dot<0] *= -1
+        st.vector_v[dot<0] *= -1
+
+        # Replace vector interpolator by simple interpolator
+        st.vector_u_interpolator = ST.createInterpolator(st.vector_u)
+        st.vector_v_interpolator = ST.createInterpolator(st.vector_v)
+
+class Overlay():
+    def __init__(self, name, data, maxrad, colormap="viridis", interpolation="linear", alpha=None, scale=None):
+        self.name = name
+        self.data = data
+        self.colormap = colormap
+        self.interpolation = interpolation
+        self.maxrad = maxrad
+        self.alpha = alpha
+        self.scale = scale
+
+    @staticmethod
+    def findIndexByName(overlays, name):
+        for i,item in enumerate(overlays):
+            if item.name == name:
+                return i
+        return -1
 
 class Tinter():
 

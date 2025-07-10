@@ -33,6 +33,7 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - sparseGrad: sparse matrix that represents the 2D grad operator.
 - sparseUmbilical: sparse matrix that represents the umbilicus location.
 - solveAxEqb: solve Ax = b (least square method find x).
+- alignUVVec: align u vector with the gradient of the radius.
 
 ### process_cl_args
 
@@ -52,6 +53,10 @@ Core logic of the structure tensor.
 - saveEigens: Combine related eigenvalues and save as an NRRD file.  
 - loadEigens: Load eigenvalue data from an NRRD file (e.g. ``.._e.nrrd`).
 - loadOrCreateEigens: Logic handling (load, save, compute).
+
+### Overlay
+
+
 
 # Details
 
@@ -88,26 +93,32 @@ And calculate the length of the tangent vectors:
 lvecs = linelen * vvs * coherence[:, :, np.newaxis]
 ```
 
+### solveWindingOneStep()
+
+Core undeform operation logic.
+
+`vector_u` (from original image) -> `r` (from umbilicus) -> `r0` (from `vector_u`, `r`) -> `vector_u` (align `vector_u` to `r0`)
+
 ### solveRadius0()
 
 Caculate pre-deformation radius array r0 (more description in original repo).
 
-```bash
+```markdown
 # r: initial radius
 # r0: pre-deformation radius
-`r0 = r + r0'`
+r0 = r + r0\'
 
 # constrain we need (r should align u)
-`u cross (grad r0) = 0`
+u cross (grad r0) = 0
 # thus
-`u cross (grad r0') = -u cross (grad r0)`
+u cross (grad r0\') = -u cross (grad r0)
 # solve Ax=b
-`A: u cross grad operator`
-`b: -u cross (grad r0)`
-`x: r0'`
+A: u cross grad operator
+b: -u cross (grad r0)
+x: r0\'
 
 # then get the result r0
-`r0 = r + r0'`
+r0 = r + r0\'
 ```
 
 The matrix `A` and flatten vector `b` are constructed by stacking the results from the `sparseVecOpGrad` and `sparseGrad` methods. The `sparseUmbilical` is to ensure that the `r0` at the umbilicus is set to 0.
