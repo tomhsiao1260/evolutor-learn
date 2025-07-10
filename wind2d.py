@@ -402,6 +402,22 @@ class ImageViewer(QLabel):
             basew = basew.copy()[::decimation, ::decimation]
         shape = wvecu.shape[:2]
         sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=True)
+        sparse_grad = ImageViewer.sparseGrad(shape)
+        sparse_umb = ImageViewer.sparseUmbilical(shape, np.array(self.umb)/decimation)
+        sparse_u_cross_grad = sparse.vstack((sparse_uxg, smoothing_weight*sparse_grad, sparse_umb))
+
+        A = sparse_u_cross_grad
+        # print("A", A.shape, A.dtype)
+
+        b = -sparse_u_cross_grad @ basew.flatten()
+        b[basew.size:] = 0.
+        x = self.solveAxEqb(A, b)
+        out = x.reshape(basew.shape)
+        out += basew
+        # print("out", out.shape, out.min(), out.max())
+        if decimation > 1:
+            out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
+        return out
 
     # set is_cross True if op is cross product, False if
     # op is dot product
@@ -490,6 +506,133 @@ class ImageViewer(QLabel):
         # sparse_uxg = sparse.csc_array((uxg[:,2], (uxg[:,0], uxg[:,1])), shape=(nrf*ncf, nrf*ncf))
         # print("sparse_uxg", sparse_uxg.shape, sparse_uxg.dtype)
         return sparse_uxg
+
+    # create a sparse matrix that represents the 2D grad operator.
+    # if interleave is true, the output is a single sparse matrix
+    # with interleaved x and y components of the grad.
+    # if interleave is false, separate sparse matrices are created
+    # for the x and y components of the grad
+    @staticmethod
+    def sparseGrad(shape, multiplier=None, interleave=True):
+        # full number of rows, columns of image
+        nrf, ncf = shape
+        nr = nrf-1
+        nc = ncf-1
+        n1df_flat = np.arange(nrf*ncf)
+        # nrf x ncf array where each element is a number
+        # representing the element's position in the array
+        n1df = np.reshape(n1df_flat, shape)
+        n1df_flat = None
+
+        # n1dfr is full in the row direction, but shrunk by 1 in column dir
+        n1dfr = n1df[:, :nc]
+        # n1dfc is full in the column direction, but shrunk by 1 in row dir
+        n1dfc = n1df[:nr, :]
+        n1df = None
+        n1dfr_flat = n1dfr.flatten()
+        n1dfr = None
+        n1dfc_flat = n1dfc.flatten()
+        n1dfc = None
+
+        mfr = None
+        mfc = None
+        if multiplier is not None:
+            mfr = multiplier.flatten()[n1dfr_flat]
+            mfc = multiplier.flatten()[n1dfc_flat]
+
+        # float32 is not precise enough for carrying indices of large
+        # flat matrices, so use default (float64)
+        diag3fr = np.stack((n1dfr_flat, n1dfr_flat, np.zeros(n1dfr_flat.shape)), axis=1)
+        n1dfr_flat = None
+        diag3fc = np.stack((n1dfc_flat, n1dfc_flat, np.zeros(n1dfc_flat.shape)), axis=1)
+        n1dfc_flat = None
+
+        dx0g = diag3fr.copy()
+        if mfr is not None:
+            dx0g[:,2] = -mfr
+        else:
+            dx0g[:,2] = -1.
+
+        dx1g = diag3fr.copy()
+        dx1g[:,1] += 1
+        if mfr is not None:
+            dx1g[:,2] = mfr
+        else:
+            dx1g[:,2] = 1.
+
+        ddxg = np.concatenate((dx0g, dx1g), axis=0)
+        # print("ddx", ddx.shape, ddx.dtype)
+
+        # clean up memory
+        diag3fr = None
+        dx0g = None
+        dx1g = None
+
+        dy0g = diag3fc.copy()
+        if mfc is not None:
+            dy0g[:,2] = -mfc
+        else:
+            dy0g[:,2] = -1.
+
+        dy1g = diag3fc.copy()
+        dy1g[:,1] += ncf
+        if mfc is not None:
+            dy1g[:,2] = mfc
+        else:
+            dy1g[:,2] = 1.
+
+        ddyg = np.concatenate((dy0g, dy1g), axis=0)
+
+        # clean up memory
+        diag3fc = None
+        dy0g = None
+        dy1g = None
+
+        if interleave:
+            ddxg[:,0] *= 2
+            ddyg[:,0] *= 2
+            ddyg[:,0] += 1
+
+            grad = np.concatenate((ddxg, ddyg), axis=0)
+            # print("grad", grad.shape, grad.min(axis=0), grad.max(axis=0), grad.dtype)
+            sparse_grad = sparse.coo_array((grad[:,2], (grad[:,0], grad[:,1])), shape=(2*nrf*ncf, nrf*ncf))
+            return sparse_grad
+        else:
+            sparse_grad_x = sparse.coo_array((ddxg[:,2], (ddxg[:,0], ddxg[:,1])), shape=(nrf*ncf, nrf*ncf))
+            sparse_grad_y = sparse.coo_array((ddyg[:,2], (ddyg[:,0], ddyg[:,1])), shape=(nrf*ncf, nrf*ncf))
+            return sparse_grad_x, sparse_grad_y
+
+    @staticmethod
+    def sparseUmbilical(shape, umb):
+        nrf, ncf = shape
+        nr = nrf-1
+        nc = ncf-1
+        n1df_flat = np.arange(nrf*ncf)
+        # nrf x ncf array where each element is a number
+        # representing the element's position in the array
+        n1df = np.reshape(n1df_flat, shape)
+        umbpt = n1df[int(umb[1]), int(umb[0])]
+        umbzero = np.array([[0, umbpt, 1.]])
+        sparse_umb = sparse.coo_array((umbzero[:,2], (umbzero[:,0], umbzero[:,1])), shape=(nrf*ncf, nrf*ncf))
+        return sparse_umb
+
+    @staticmethod
+    def solveAxEqb(A, b):
+        print("solving Ax = b", A.shape, b.shape)
+        At = A.transpose()
+        AtA = At @ A
+        # print("AtA", AtA.shape, sparse.issparse(AtA))
+        # print("ata", ata.shape, ata.dtype, ata[ata!=0], np.argwhere(ata))
+        asum = np.abs(AtA).sum(axis=0)
+        # print("asum", np.argwhere(asum==0))
+        Atb = At @ b
+        # print("Atb", Atb.shape, sparse.issparse(Atb))
+
+        lu = sparse.linalg.splu(AtA.tocsc())
+        # print("lu created")
+        x = lu.solve(Atb)
+        print("x", x.shape, x.dtype, x.min(), x.max())
+        return x
 
 class Tinter():
 
