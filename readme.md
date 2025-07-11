@@ -28,12 +28,16 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - ixyToWxy: Convert absolute coordinates to window display coordinates.
 - solveWindingOneStep: Core undeform operation logic.
 - createRadiusArray: Initial radius array (distance to umbilicus).
+- createThetaArray: Initial theta array (angle to umbilicus).
 - solveRadius0: Caculate pre-deformation radius array r0.
+- solveRadius1: Caculate pre-deformation radius array r1.
+- solveTheta: Caculate pre-deformation theta array.
 - sparseVecOpGrad: sparse matrix that represents the operator vec2d cross grad or vec2d dot grad.
 - sparseGrad: sparse matrix that represents the 2D grad operator.
 - sparseUmbilical: sparse matrix that represents the umbilicus location.
 - solveAxEqb: solve Ax = b (least square method find x).
 - alignUVVec: align u vector with the gradient of the radius.
+- synthesizeUVecArray: create u vectors and coherence from a given radius array.
 
 ### process_cl_args
 
@@ -97,7 +101,7 @@ lvecs = linelen * vvs * coherence[:, :, np.newaxis]
 
 Core undeform operation logic.
 
-`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`)
+`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`) -> `th0`
 
 ### solveRadius0()
 
@@ -153,4 +157,27 @@ x = self.solveAxEqb(A, b)
 
 Once r1 is computed, an adjustment factor is calculated. Averaged over the entire image, r1 / r should equal 1. The actual ratio is calculated (in the center part of the image), and r1 is multiplied by whatever factor is needed to bring the average r1 / r ratio to 1.
 
+### solveTheta()
+
+Caculate pre-deformation theta array.
+
+```markdown
+# t is tangent vector, n is normal vector
+
+# constrain we need
+(r1 grad th0) dot t = 1
+# change its form a bit
+(r1 grad th0) cross n = 1
+
+# more contrain for smoothness
+```
+
+Then, solve Ax=b
+```python
+A = sparse.vstack((sparse_u_cross_g, dot_weight*sparse_u_dot_g, smoothing_weight*sparse_grad, theta_weight*sparse_theta))
+
+b_all = np.concatenate((b_cross, dot_weight*b_dot, smoothing_weight*b_grad, theta_weight*b_theta))
+
+x = self.solveAxEqb(A, b)
+```
 
