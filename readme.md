@@ -103,7 +103,7 @@ lvecs = linelen * vvs * coherence[:, :, np.newaxis]
 
 Core undeform operation logic.
 
-`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`) -> `th0` -> `r1` (adjust)
+`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`) -> `th0` -> `r1` (adjust) -> `th1` (from `r1`)
 
 ### solveRadius0()
 

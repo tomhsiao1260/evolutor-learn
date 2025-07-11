@@ -504,6 +504,17 @@ class ImageViewer(QLabel):
 
         rad1 /= mgxu
 
+        theta1 = self.solveTheta(rad1, th0uvec, th0coh, dot_weight, smoothing_weight, theta_weight)
+
+        self.overlay_data = theta1
+        self.overlay_name = "theta1"
+        self.overlay_colormap = "tab20"
+        self.overlay_interpolation = "nearest"
+        self.overlay_maxrad = 3.
+        self.saveCurrentOverlay()
+
+        self.setOverlayByName("theta1")
+
     def createRadiusArray(self):
         umb = self.umb
         im = self.image
