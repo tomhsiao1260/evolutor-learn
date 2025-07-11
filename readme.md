@@ -97,7 +97,7 @@ lvecs = linelen * vvs * coherence[:, :, np.newaxis]
 
 Core undeform operation logic.
 
-`vector_u` (from original image) -> `r` (from umbilicus) -> `r0` (from `vector_u`, `r`) -> `vector_u` (align `vector_u` to `r0`)
+`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`)
 
 ### solveRadius0()
 
@@ -112,15 +112,43 @@ r0 = r + r0'
 u cross (grad r0) = 0
 # thus
 u cross (grad r0') = -u cross (grad r0)
-# solve Ax=b
-A: u cross grad operator
-b: -u cross (grad r0)
-x: r0'
+```
 
-# then get the result r0
-r0 = r + r0'
+
+Then, solve Ax=b
+```python
+A = sparse.vstack((sparse_uxg, smoothing_weight*sparse_grad, sparse_umb))
+
+b = -sparse_u_cross_grad @ basew.flatten()
+b[basew.size:] = 0.
+
+x = self.solveAxEqb(A, b)
+
+# Then, get the final result via r0 = r + r0'
 ```
 
 The matrix `A` and flatten vector `b` are constructed by stacking the results from the `sparseVecOpGrad` and `sparseGrad` methods. The `sparseUmbilical` is to ensure that the `r0` at the umbilicus is set to 0.
+
+### solveRadius1()
+
+Generate `r1` which use `u` to refine the value of the pre-deformation radius `r0`.
+
+```markdown
+# constrain we need (simple circular geometry)
+u dot (grad r1) = 1
+u cross (grad r1) = 0
+
+# more contrain (smooth in x, y direction, radius 0 at umbilicus)
+```
+
+Then, solve Ax=b
+```python
+A = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*hxx, smoothing_weight*hyy, sparse_umb))
+
+b = np.zeros((A.shape[0]), dtype=np.float64)
+b[:rad0.size] = 1.*coh.flatten()*decimation*icw
+
+x = self.solveAxEqb(A, b)
+```
 
 

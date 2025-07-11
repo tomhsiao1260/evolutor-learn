@@ -425,6 +425,13 @@ class ImageViewer(QLabel):
         self.overlay_maxrad = self.umb_maxrad
         self.saveCurrentOverlay()
 
+        # hess
+        smoothing_weight = .2
+        # grad
+        # smoothing_weight = .01
+        cross_weight = 0.95
+        rad1 = self.solveRadius1(rad0, smoothing_weight, cross_weight)
+
     def createRadiusArray(self):
         umb = self.umb
         im = self.image
@@ -465,6 +472,58 @@ class ImageViewer(QLabel):
         # print("out", out.shape, out.min(), out.max())
         if decimation > 1:
             out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
+        return out
+
+    def solveRadius1(self, rad0, smoothing_weight, cross_weight):
+        st = self.main_window.st
+        print("rad1 smoothing", smoothing_weight, "cross_weight", cross_weight)
+        decimation = self.decimation
+        # print("decimation", decimation)
+
+        icw = 1.-cross_weight
+
+        uvec = st.vector_u
+        coh = st.coherence.copy()
+
+        # TODO: for testing
+        # mask = self.createMask()
+        ## coh = coh.copy()*mask
+        # coh *= mask
+
+        coh = coh[:,:,np.newaxis]
+
+        wuvec = coh*uvec
+        if decimation > 1:
+            wuvec = wuvec[::decimation, ::decimation, :]
+            coh = coh.copy()[::decimation, ::decimation, :]
+            rad0 = rad0.copy()[::decimation, ::decimation] / decimation
+        shape = wuvec.shape[:2]
+        sparse_u_cross_g = ImageViewer.sparseVecOpGrad(wuvec, is_cross=True)
+        sparse_u_dot_g = ImageViewer.sparseVecOpGrad(wuvec, is_cross=False)
+        sparse_grad = ImageViewer.sparseGrad(shape)
+        sgx, sgy = ImageViewer.sparseGrad(shape, interleave=False)
+        hxx = sgx.transpose() @ sgx
+        hyy = sgy.transpose() @ sgy
+        hxy = sgx @ sgy
+        # print("sgx", sgx.shape, "hxx", hxx.shape, "hxy", hxy.shape)
+
+        # print("grad", sparse_grad.shape, "hess", sparse_hess.shape)
+        sparse_umb = ImageViewer.sparseUmbilical(shape, np.array(self.umb)/decimation)
+        # sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*sparse_grad, sparse_umb))
+        # sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*hxx, smoothing_weight*hyy, smoothing_weight*hxy, sparse_umb))
+        sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*hxx, smoothing_weight*hyy, sparse_umb))
+
+        A = sparse_all
+        # print("A", A.shape, A.dtype)
+
+        b = np.zeros((A.shape[0]), dtype=np.float64)
+        # NOTE multiplication by decimation factor
+        b[:rad0.size] = 1.*coh.flatten()*decimation*icw
+        x = self.solveAxEqb(A, b)
+        out = x.reshape(rad0.shape)
+        # print("out", out.shape, out.min(), out.max())
+        if decimation > 1:
+            out = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
         return out
 
     # set is_cross True if op is cross product, False if
