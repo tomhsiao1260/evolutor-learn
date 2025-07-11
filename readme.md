@@ -35,9 +35,11 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - sparseVecOpGrad: sparse matrix that represents the operator vec2d cross grad or vec2d dot grad.
 - sparseGrad: sparse matrix that represents the 2D grad operator.
 - sparseUmbilical: sparse matrix that represents the umbilicus location.
+- sparseDiagonal: sparse matrix that represents the diagonal array.
 - solveAxEqb: solve Ax = b (least square method find x).
 - alignUVVec: align u vector with the gradient of the radius.
 - synthesizeUVecArray: create u vectors and coherence from a given radius array.
+- computeGrad: Caculate gradient x, y for a given array.
 
 ### process_cl_args
 
@@ -101,7 +103,7 @@ lvecs = linelen * vvs * coherence[:, :, np.newaxis]
 
 Core undeform operation logic.
 
-`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`) -> `th0`
+`u` (from original image) -> `r` (from umbilicus) -> `r0` (from `u`, `r`) -> `u` (align `u` to `r0`) -> `r1` (from `r0` and `u`) -> `th0` -> `r1` (adjust)
 
 ### solveRadius0()
 
@@ -174,6 +176,7 @@ Caculate pre-deformation theta array.
 
 Then, solve Ax=b
 ```python
+# sparse_u_cross_g, b_cross -> (r1 grad th0) cross n = 1
 A = sparse.vstack((sparse_u_cross_g, dot_weight*sparse_u_dot_g, smoothing_weight*sparse_grad, theta_weight*sparse_theta))
 
 b_all = np.concatenate((b_cross, dot_weight*b_dot, smoothing_weight*b_grad, theta_weight*b_theta))

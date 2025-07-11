@@ -481,6 +481,29 @@ class ImageViewer(QLabel):
         self.overlay_maxrad = 3.
         self.saveCurrentOverlay()
 
+        gradx, grady = self.computeGrad(theta0)
+        gradx *= rad1
+        grady *= rad1
+        grad = np.sqrt(gradx*gradx+grady*grady)
+
+        # u cross (rad1 grad theta0)
+        gxu = -gradx*th0uvec[:,:,1] + grady*th0uvec[:,:,0]
+
+        cargs = np.argsort(coh.flatten())
+        min_coh = coh.flatten()[cargs[len(cargs)//4]]
+        rargs = np.argsort(rad1.flatten())
+        max_rad1 = rad1.flatten()[rargs[len(rargs)//4]]
+
+        crb = np.logical_and(coh > min_coh, rad1 < max_rad1)
+
+        # gxu (defined above) should average out to 1.0 over the image;
+        # find the deviation and apply it as a correction factor to rad1
+        mgxu = np.median(gxu[crb])
+
+        print("mgxu", mgxu)
+
+        rad1 /= mgxu
+
     def createRadiusArray(self):
         umb = self.umb
         im = self.image
