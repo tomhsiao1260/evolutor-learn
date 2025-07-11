@@ -151,4 +151,6 @@ b[:rad0.size] = 1.*coh.flatten()*decimation*icw
 x = self.solveAxEqb(A, b)
 ```
 
+Once r1 is computed, an adjustment factor is calculated. Averaged over the entire image, r1 / r should equal 1. The actual ratio is calculated (in the center part of the image), and r1 is multiplied by whatever factor is needed to bring the average r1 / r ratio to 1.
+
 

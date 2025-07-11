@@ -432,6 +432,34 @@ class ImageViewer(QLabel):
         cross_weight = 0.95
         rad1 = self.solveRadius1(rad0, smoothing_weight, cross_weight)
 
+        # find which locations in the image have
+        # high coherency and a low radius
+        cargs = np.argsort(coh.flatten())
+        min_coh = coh.flatten()[cargs[len(cargs)//4]]
+        rargs = np.argsort(rad1.flatten())
+        max_rad1 = rad1.flatten()[rargs[len(rargs)//4]]
+
+        crb = np.logical_and(coh > min_coh, rad1 < max_rad1)
+        crb = np.logical_and(crb, rad > 0)
+        rs = rad[crb]
+        r1s = rad1[crb]
+        # using the locations found above, find the average
+        # ratio between r1 (pre-deformation radius) and
+        # current radius.
+        mr1r = np.median(r1s/rs)
+        print("mr1r", mr1r)
+        # apply this ratio as a correction to r1
+        rad1 /= mr1r
+
+        self.overlay_data = rad1
+        self.overlay_name = "rad1"
+        self.overlay_colormap = "tab20"
+        self.overlay_interpolation = "nearest"
+        self.overlay_maxrad = self.umb_maxrad
+        self.saveCurrentOverlay()
+
+        self.setOverlayByName("rad1")
+
     def createRadiusArray(self):
         umb = self.umb
         im = self.image
