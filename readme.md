@@ -40,6 +40,8 @@ Able to convert a specified TIFF image into a circular shape (requires center po
 - alignUVVec: align u vector with the gradient of the radius.
 - synthesizeUVecArray: create u vectors and coherence from a given radius array.
 - computeGrad: Caculate gradient x, y for a given array.
+- xformXY: given radius and theta, compute x and y.
+- warpImage: transform the image for a given src and dest via FastPiecewiseAffineTransform.
 
 ### process_cl_args
 
@@ -62,7 +64,7 @@ Core logic of the structure tensor.
 
 ### Overlay
 
-
+A class to store different structure tensor during the calculation and display them via drawAll function.
 
 # Details
 

@@ -4,6 +4,8 @@ import argparse
 import pathlib
 import math
 from scipy import sparse
+import skimage
+from skimage.transform import PiecewiseAffineTransform
 
 from st import ST
 
@@ -75,6 +77,7 @@ class MainWindow(QMainWindow):
         if maxrad is None:
             maxrad = self.viewer.umb_maxrad
         self.viewer.overlay_maxrad = maxrad
+        self.viewer.warp_decimation = parsed_args.warp_decimation
 
         self.st = ST(self.viewer.image)
 
@@ -95,6 +98,65 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         self.viewer.keyPressEvent(e)
+
+# Adapted rom https://github.com/scikit-image/scikit-image/issues/6864
+# Modified to use less memory
+class FastPiecewiseAffineTransform(PiecewiseAffineTransform):
+    def __call__(self, coords):
+        print("starting __call__")
+        coords = np.asarray(coords)
+        print("coords", coords.shape)
+
+
+
+        raw_affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))])
+        print("created raw_affines", raw_affines.shape)
+
+        # process only "step" coords at a time
+        # in order not to use too much memory
+        step = 10000000
+        result = np.zeros((coords.shape[0], 3), dtype=coords.dtype)
+        for start in range(0, coords.shape[0], step):
+            end = min(start+step, coords.shape[0])
+            lcoords = coords[start:end]
+            simplex = self._tesselation.find_simplex(lcoords)
+            pts = np.c_[lcoords, np.ones((end-start, 1))]
+            result[start:end] = np.einsum("ij,ikj->ik", pts, raw_affines[simplex])
+            result[start:end][simplex == -1, :] = -1
+            # print(" ",start)
+
+
+        print("leaving __call__")
+        return result
+
+    def old__call__(self, coords):
+        print("starting __call__")
+        coords = np.asarray(coords)
+        print("coords", coords.shape)
+
+        simplex = self._tesselation.find_simplex(coords)
+        print("found simplexes", simplex.shape)
+
+        '''
+        affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))]
+        )[simplex]
+        '''
+        raw_affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))])
+        # affines = raw_affines[simplex]
+
+        # print("created affines", len(self.affines), raw_affines.shape, affines.shape)
+        print("created raw_affines", len(self.affines), raw_affines.shape)
+
+        pts = np.c_[coords, np.ones((coords.shape[0], 1))]
+
+        result = np.einsum("ij,ikj->ik", pts, raw_affines[simplex])
+        print("did einsum", pts.shape, result.shape, result.flags['C_CONTIGUOUS'])
+        result[simplex == -1, :] = -1
+
+        return result
 
 class ImageViewer(QLabel):
 
@@ -246,6 +308,7 @@ class ImageViewer(QLabel):
 
     def getNextOverlay(self):
         name = self.overlay_name
+        print(name)
 
         no = Overlay.findNextItem(self.overlays, name)
         self.makeOverlayCurrent(no)
@@ -278,10 +341,27 @@ class ImageViewer(QLabel):
         if self.image is None:
             return
         total_alpha = .8
-        main_alpha = total_alpha
+        if self.overlay_data is None:
+            main_alpha = total_alpha
+            # overlay_alpha = 0.
+        elif self.overlay_alpha is not None:
+            # overlay_alpha = total_alpha*self.overlay_alpha
+            # main_alpha = total_alpha - overlay_alpha
+            main_alpha = total_alpha*(1. - self.overlay_alpha)
+        else:
+            main_alpha = .5*total_alpha
+        overlay_alpha = total_alpha - main_alpha
 
         outrgb = self.dataToZoomedRGB(self.image, alpha=main_alpha)
         st = self.main_window.st
+        other_data = None
+        if self.overlay_maxrad is None:
+            other_data = self.overlay_data
+        elif self.overlay_data is not None:
+            other_data = self.overlay_data / self.overlay_maxrad
+            # print("maxrad", self.overlay_maxrad)
+        if other_data is not None:
+            outrgb += self.dataToZoomedRGB(other_data, alpha=overlay_alpha, colormap=self.overlay_colormap, interpolation=self.overlay_interpolation, scale=self.overlay_scale)
 
         ww = self.width()
         wh = self.height()
@@ -515,6 +595,80 @@ class ImageViewer(QLabel):
 
         self.setOverlayByName("theta1")
 
+        rad = self.createRadiusArray()
+        theta = self.createThetaArray()
+
+        # present day xy of image pixels
+        src = self.xformXY(rad, theta)
+
+        # pre-deformation xy of image pixels
+        dest = self.xformXY(rad1, theta1)
+
+        ishape = self.image.shape
+
+        # apply decimation and shift
+        deci = self.warp_decimation
+        ndots = ishape[0]*ishape[1] / (deci*deci)
+        print("deci", deci, "ndots", ndots)
+        srcd = src[::deci, ::deci].reshape(-1,2)
+        b = np.logical_and(srcd[:,0] <= 0, np.abs(srcd[:,1]) <= self.decimation)
+        srcd = srcd[~b]
+        srcd += self.umb
+        self.src_dots = srcd.copy()
+
+
+        # srcd = srcd[100:150,100:150]
+        # print(srcd[0])
+        # apply decimation and shift
+        # need to apply additional factors to make 
+        # sure un-deformed image is fully visible
+        destd = dest[::deci, ::deci].reshape(-1,2)
+        destd = destd[~b]
+        print("destd min max", destd.min(axis=0), destd.max(axis=0))
+        dmin = destd.min(axis=0)
+        dmax = destd.max(axis=0)
+        dmin[dmin==0] = .01
+        dmax[dmax==0] = .01
+        imin = -self.umb
+        imax = imin + np.array((ishape[1],ishape[0]))
+        print("dmin, dmax", dmin, dmax)
+        print("imin, imax", imin, imax)
+        rmin = np.abs(imin/dmin).min()
+        rmax = np.abs(imax/dmax).min()
+        resize = min(rmin, rmax)*.95
+        scale = 1./resize
+        scale = min(scale, 2.)
+        print("resize", resize, "scale", scale)
+
+        destd *= resize
+        destd += self.umb
+        # print("destd min max", destd.min(axis=0), destd.max(axis=0))
+        self.dest_dots = destd.copy()
+        destd *= scale
+
+        oim = self.warpImage(srcd, destd, scale)
+        print("finished warping")
+
+        self.overlay_data = oim
+        self.overlay_name = "warped"
+        self.overlay_colormap = "gray"
+        self.overlay_interpolation = "linear"
+        self.overlay_maxrad = 1.
+        self.overlay_alpha = 1.
+        self.overlay_scale = scale
+        self.saveCurrentOverlay()
+
+    def warpImage(self, srcd, destd, scale):
+        ishape = self.image.shape
+        # xform = PiecewiseAffineTransform()
+        xform = FastPiecewiseAffineTransform()
+        print("estimating")
+        xform.estimate(destd, srcd)
+        oshape = (int(ishape[0]*scale), int(ishape[1]*scale))
+        print("warping", oshape, oshape[0]*oshape[1])
+        oim = skimage.transform.warp(self.image, xform, output_shape=oshape)
+        return oim
+
     def createRadiusArray(self):
         umb = self.umb
         im = self.image
@@ -551,6 +705,14 @@ class ImageViewer(QLabel):
         coh[:,-1] = 0
         coh[-1,:] = 0
         return uvec, coh
+
+    # given radius and theta, compute x and y
+    def xformXY(self, rad, theta):
+        x = rad*np.cos(theta)
+        y = rad*np.sin(theta)
+        xy = np.stack((x,y), axis=2)
+        print(x.shape, y.shape, xy.shape)
+        return xy
 
     def solveRadius0(self, basew, smoothing_weight):
         st = self.main_window.st
