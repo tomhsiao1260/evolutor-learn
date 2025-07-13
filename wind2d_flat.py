@@ -228,16 +228,36 @@ class ImageViewer(QLabel):
         if e.key() == Qt.Key_W:
             self.solveWindingOneStep()
             self.drawAll()
+        elif e.key() == Qt.Key_A:
+            self.getNextOverlay()
+            self.drawAll()
 
     def drawAll(self):
         if self.image is None:
             return
 
         total_alpha = .8
-        main_alpha = total_alpha
+        if self.overlay_data is None:
+            main_alpha = total_alpha
+            # overlay_alpha = 0.
+        elif self.overlay_alpha is not None:
+            # overlay_alpha = total_alpha*self.overlay_alpha
+            # main_alpha = total_alpha - overlay_alpha
+            main_alpha = total_alpha*(1. - self.overlay_alpha)
+        else:
+            main_alpha = .5*total_alpha
+        overlay_alpha = total_alpha - main_alpha
 
         outrgb = self.dataToZoomedRGB(self.image, alpha=main_alpha)
         st = self.main_window.st
+        other_data = None
+        if self.overlay_maxrad is None:
+            other_data = self.overlay_data
+        elif self.overlay_data is not None:
+            other_data = self.overlay_data / self.overlay_maxrad
+            # print("maxrad", self.overlay_maxrad)
+        if other_data is not None:
+            outrgb += self.dataToZoomedRGB(other_data, alpha=overlay_alpha, colormap=self.overlay_colormap, interpolation=self.overlay_interpolation, scale=self.overlay_scale)
 
         ww = self.width()
         wh = self.height()
@@ -367,9 +387,30 @@ class ImageViewer(QLabel):
         ixs, iys = self.createXYArray()
 
         smoothing_weight = .1
-        y0 = self.solveY0(ixs, smoothing_weight)
+        y0 = self.solveY0(iys, smoothing_weight)
 
         self.alignUVVec(y0)
+
+        # copy uvec AFTER it has been aligned
+        st = self.main_window.st
+        uvec = st.vector_u.copy()
+        coh = st.coherence.copy()
+
+        self.overlay_data = y0/np.max(y0)
+        self.overlay_name = "y0"
+        self.overlay_colormap = "tab20"
+        self.overlay_interpolation = "nearest"
+        self.saveCurrentOverlay()
+
+        smoothing_weight = .1
+        x0 = self.solveX0(ixs, smoothing_weight)
+
+        self.overlay_data = x0/np.max(x0)
+        self.overlay_name = "x0"
+        self.overlay_colormap = "tab20"
+        self.overlay_interpolation = "nearest"
+        self.saveCurrentOverlay()
+
 
     def createXYArray(self):
         im = self.image
@@ -409,6 +450,39 @@ class ImageViewer(QLabel):
         wvecu = coh*vecu
         if decimation > 1:
             wvecu = wvecu[::decimation, ::decimation, :]
+            coh = coh.copy()[::decimation, ::decimation, :]
+            basew = basew.copy()[::decimation, ::decimation]
+        shape = wvecu.shape[:2]
+        sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=False)
+        sparse_grad = ImageViewer.sparseGrad(shape)
+        sparse_u_cross_grad = sparse.vstack((sparse_uxg, smoothing_weight*sparse_grad))
+
+        A = sparse_u_cross_grad
+        # print("A", A.shape, A.dtype)
+
+        b = np.zeros((A.shape[0]), dtype=np.float64)
+        b[:basew.size] = 1.*coh.flatten()*decimation
+        b[basew.size:] = 0.
+        x = self.solveAxEqb(A, b)
+        out = x.reshape(basew.shape)
+        print("out", out.shape, out.min(), out.max())
+
+        if decimation > 1:
+            out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
+        return out
+
+    def solveX0(self, basew, smoothing_weight):
+        st = self.main_window.st
+        decimation = self.decimation
+        print("x0 smoothing", smoothing_weight)
+        print("decimation", decimation)
+
+        vecu = st.vector_u
+        coh = st.coherence[:,:,np.newaxis]
+        wvecu = coh*vecu
+        if decimation > 1:
+            wvecu = wvecu[::decimation, ::decimation, :]
+            coh = coh.copy()[::decimation, ::decimation, :]
             basew = basew.copy()[::decimation, ::decimation]
         shape = wvecu.shape[:2]
         sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=True)
@@ -419,11 +493,12 @@ class ImageViewer(QLabel):
         # print("A", A.shape, A.dtype)
 
         b = np.zeros((A.shape[0]), dtype=np.float64)
-        b[:basew.size] = 0.
+        b[:basew.size] = 1.*coh.flatten()*decimation
         b[basew.size:] = 0.
         x = self.solveAxEqb(A, b)
         out = x.reshape(basew.shape)
-        # print("out", out.shape, out.min(), out.max())
+        print("out", out.shape, out.min(), out.max())
+
         if decimation > 1:
             out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
         return out
@@ -628,6 +703,77 @@ class ImageViewer(QLabel):
         x = lu.solve(Atb)
         print("x", x.shape, x.dtype, x.min(), x.max())
         return x
+
+    def saveCurrentOverlay(self):
+        name = self.overlay_name
+        no = Overlay(name, self.overlay_data, self.overlay_maxrad, self.overlay_colormap, self.overlay_interpolation, self.overlay_alpha, self.overlay_scale)
+        index = Overlay.findIndexByName(self.overlays, name)
+        if index < 0:
+            self.overlays.append(no)
+        else:
+            self.overlays[index] = no
+
+    def getNextOverlay(self):
+        name = self.overlay_name
+        print(name)
+
+        no = Overlay.findNextItem(self.overlays, name)
+        self.makeOverlayCurrent(no)
+
+    def makeOverlayCurrent(self, overlay):
+        self.saveCurrentOverlay()
+        self.overlay_data = overlay.data
+        self.overlay_name = overlay.name
+        self.overlay_colormap = overlay.colormap
+        self.overlay_interpolation = overlay.interpolation
+        self.overlay_maxrad = overlay.maxrad
+        self.overlay_alpha = overlay.alpha
+        self.overlay_scale = overlay.scale
+
+    def setOverlayByName(self, name):
+        o = Overlay.findItemByName(self.overlays, name)
+        if o is None:
+            return
+        self.makeOverlayCurrent(o)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_W:
+            self.solveWindingOneStep()
+            self.drawAll()
+        elif e.key() == Qt.Key_A:
+            self.getNextOverlay()
+            self.drawAll()
+
+class Overlay():
+    def __init__(self, name, data, maxrad, colormap="viridis", interpolation="linear", alpha=None, scale=None):
+        self.name = name
+        self.data = data
+        self.colormap = colormap
+        self.interpolation = interpolation
+        self.maxrad = maxrad
+        self.alpha = alpha
+        self.scale = scale
+
+    @staticmethod
+    def findIndexByName(overlays, name):
+        for i,item in enumerate(overlays):
+            if item.name == name:
+                return i
+        return -1
+
+    @staticmethod
+    def findNextItem(overlays, cur_name):
+        index = Overlay.findIndexByName(overlays, cur_name)
+        if index < 0:
+            return overlays[0]
+        return overlays[(index+1)%len(overlays)]
+
+    @staticmethod
+    def findItemByName(overlays, name):
+        index = Overlay.findIndexByName(overlays, name)
+        if index < 0:
+            return None
+        return overlays[index]
 
 class Tinter():
 
