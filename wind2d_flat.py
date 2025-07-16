@@ -4,6 +4,8 @@ import argparse
 import pathlib
 import math
 from scipy import sparse
+import skimage
+from skimage.transform import PiecewiseAffineTransform
 
 from st import ST
 
@@ -25,6 +27,7 @@ from PyQt5.QtGui import (
 
 import numpy as np
 import cmap
+import tifffile
 
 class MainWindow(QMainWindow):
 
@@ -85,6 +88,65 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         self.viewer.keyPressEvent(e)
+
+# Adapted rom https://github.com/scikit-image/scikit-image/issues/6864
+# Modified to use less memory
+class FastPiecewiseAffineTransform(PiecewiseAffineTransform):
+    def __call__(self, coords):
+        print("starting __call__")
+        coords = np.asarray(coords)
+        print("coords", coords.shape)
+
+
+
+        raw_affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))])
+        print("created raw_affines", raw_affines.shape)
+
+        # process only "step" coords at a time
+        # in order not to use too much memory
+        step = 10000000
+        result = np.zeros((coords.shape[0], 3), dtype=coords.dtype)
+        for start in range(0, coords.shape[0], step):
+            end = min(start+step, coords.shape[0])
+            lcoords = coords[start:end]
+            simplex = self._tesselation.find_simplex(lcoords)
+            pts = np.c_[lcoords, np.ones((end-start, 1))]
+            result[start:end] = np.einsum("ij,ikj->ik", pts, raw_affines[simplex])
+            result[start:end][simplex == -1, :] = -1
+            # print(" ",start)
+
+
+        print("leaving __call__")
+        return result
+
+    def old__call__(self, coords):
+        print("starting __call__")
+        coords = np.asarray(coords)
+        print("coords", coords.shape)
+
+        simplex = self._tesselation.find_simplex(coords)
+        print("found simplexes", simplex.shape)
+
+        '''
+        affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))]
+        )[simplex]
+        '''
+        raw_affines = np.array(
+            [self.affines[i].params for i in range(len(self._tesselation.simplices))])
+        # affines = raw_affines[simplex]
+
+        # print("created affines", len(self.affines), raw_affines.shape, affines.shape)
+        print("created raw_affines", len(self.affines), raw_affines.shape)
+
+        pts = np.c_[coords, np.ones((coords.shape[0], 1))]
+
+        result = np.einsum("ij,ikj->ik", pts, raw_affines[simplex])
+        print("did einsum", pts.shape, result.shape, result.flags['C_CONTIGUOUS'])
+        result[simplex == -1, :] = -1
+
+        return result
 
 class ImageViewer(QLabel):
 
@@ -388,6 +450,8 @@ class ImageViewer(QLabel):
 
         smoothing_weight = .1
         y0 = self.solveY0(iys, smoothing_weight)
+        y0 -= np.min(y0)
+        y0 /= np.max(y0)
 
         self.alignUVVec(y0)
 
@@ -396,21 +460,115 @@ class ImageViewer(QLabel):
         uvec = st.vector_u.copy()
         coh = st.coherence.copy()
 
-        self.overlay_data = y0/np.max(y0)
-        self.overlay_name = "y0"
+        # self.overlay_data = y0
+        # self.overlay_name = "y0"
+        # self.overlay_colormap = "tab20"
+        # self.overlay_interpolation = "nearest"
+        # self.saveCurrentOverlay()
+
+        # hess
+        smoothing_weight = .2
+        # grad
+        # smoothing_weight = .01
+        cross_weight = 0.95
+        y1 = self.solveY1(y0, smoothing_weight, cross_weight)
+        y1 -= np.min(y1)
+        y1 /= np.max(y1)
+
+        # find which locations in the image have
+        # high coherency and a low radius
+        cargs = np.argsort(coh.flatten())
+        min_coh = coh.flatten()[cargs[len(cargs)//4]]
+        rargs = np.argsort(y1.flatten())
+        max_y1 = y1.flatten()[rargs[len(rargs)//4]]
+
+        crb = np.logical_and(coh > min_coh, y1 < max_y1)
+        crb = np.logical_and(crb, iys > 0)
+        rs = iys[crb]
+        r1s = iys[crb]
+        # using the locations found above, find the average
+        # ratio between r1 (pre-deformation radius) and
+        # current radius.
+        mr1r = np.median(r1s/rs)
+        print("mr1r", mr1r)
+        # apply this ratio as a correction to r1
+        y1 /= mr1r
+
+        self.overlay_data = y1
+        self.overlay_name = "y1"
         self.overlay_colormap = "tab20"
         self.overlay_interpolation = "nearest"
         self.saveCurrentOverlay()
 
+        self.setOverlayByName("y1")
+
         smoothing_weight = .1
         x0 = self.solveX0(ixs, smoothing_weight)
+        x0 -= np.min(x0)
+        x0 /= np.max(x0)
 
-        self.overlay_data = x0/np.max(x0)
+        self.overlay_data = x0
         self.overlay_name = "x0"
         self.overlay_colormap = "tab20"
         self.overlay_interpolation = "nearest"
         self.saveCurrentOverlay()
 
+        h, w = self.image.shape
+        deci = self.warp_decimation
+
+        iy, ix = np.mgrid[0:h, 0:w]
+        srcd = np.stack([ix, iy], axis=-1)[::deci, ::deci].reshape(-1, 2)
+        destd = np.stack([x0 * w, y1 * h], axis=-1)[::deci, ::deci].reshape(-1, 2)
+
+        # scale = 1.
+        # oy1 = self.warpImage(y1, srcd, destd, scale)
+        # print("finished y warping")
+
+        # self.overlay_data = oy1
+        # self.overlay_name = "y warped"
+        # self.overlay_colormap = "tab20"
+        # self.overlay_interpolation = "nearest"
+        # self.overlay_maxrad = 1.
+        # self.overlay_alpha = 1.
+        # self.overlay_scale = scale
+        # self.saveCurrentOverlay()
+
+        # scale = 1.
+        # ox1 = self.warpImage(x0, srcd, destd, scale)
+        # print("finished x warping")
+
+        # self.overlay_data = ox1
+        # self.overlay_name = "x warped"
+        # self.overlay_colormap = "tab20"
+        # self.overlay_interpolation = "nearest"
+        # self.overlay_maxrad = 1.
+        # self.overlay_alpha = 1.
+        # self.overlay_scale = scale
+        # self.saveCurrentOverlay()
+
+        scale = 1.
+        oim = self.warpImage(self.image, srcd, destd, scale)
+        print("finished warping")
+
+        self.overlay_data = oim
+        self.overlay_name = "warped"
+        self.overlay_colormap = "gray"
+        self.overlay_interpolation = "linear"
+        self.overlay_maxrad = 1.
+        self.overlay_alpha = 1.
+        self.overlay_scale = scale
+        self.saveCurrentOverlay()
+
+    def warpImage(self, target, srcd, destd, scale):
+        ishape = target.shape
+        # xform = PiecewiseAffineTransform()
+        xform = FastPiecewiseAffineTransform()
+        print("estimating")
+        xform.estimate(destd, srcd)
+        oshape = (int(ishape[0]*scale), int(ishape[1]*scale))
+        print("warping", oshape, oshape[0]*oshape[1])
+        oim = skimage.transform.warp(target, xform, output_shape=oshape)
+        return oim
 
     def createXYArray(self):
         im = self.image
@@ -450,25 +608,74 @@ class ImageViewer(QLabel):
         wvecu = coh*vecu
         if decimation > 1:
             wvecu = wvecu[::decimation, ::decimation, :]
-            coh = coh.copy()[::decimation, ::decimation, :]
             basew = basew.copy()[::decimation, ::decimation]
         shape = wvecu.shape[:2]
-        sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=False)
+        sparse_uxg = ImageViewer.sparseVecOpGrad(wvecu, is_cross=True)
         sparse_grad = ImageViewer.sparseGrad(shape)
         sparse_u_cross_grad = sparse.vstack((sparse_uxg, smoothing_weight*sparse_grad))
 
         A = sparse_u_cross_grad
         # print("A", A.shape, A.dtype)
 
-        b = np.zeros((A.shape[0]), dtype=np.float64)
-        b[:basew.size] = 1.*coh.flatten()*decimation
+        b = -sparse_u_cross_grad @ basew.flatten()
         b[basew.size:] = 0.
         x = self.solveAxEqb(A, b)
         out = x.reshape(basew.shape)
-        print("out", out.shape, out.min(), out.max())
-
+        out += basew
+        # print("out", out.shape, out.min(), out.max())
         if decimation > 1:
             out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
+        return out
+
+    def solveY1(self, y0, smoothing_weight, cross_weight):
+        st = self.main_window.st
+        print("y1 smoothing", smoothing_weight, "cross_weight", cross_weight)
+        decimation = self.decimation
+        # print("decimation", decimation)
+
+        icw = 1.-cross_weight
+
+        uvec = st.vector_u
+        coh = st.coherence.copy()
+
+        # TODO: for testing
+        # mask = self.createMask()
+        ## coh = coh.copy()*mask
+        # coh *= mask
+
+        coh = coh[:,:,np.newaxis]
+
+        wuvec = coh*uvec
+        if decimation > 1:
+            wuvec = wuvec[::decimation, ::decimation, :]
+            coh = coh.copy()[::decimation, ::decimation, :]
+            y0 = y0.copy()[::decimation, ::decimation] / decimation
+        shape = wuvec.shape[:2]
+        sparse_u_cross_g = ImageViewer.sparseVecOpGrad(wuvec, is_cross=True)
+        sparse_u_dot_g = ImageViewer.sparseVecOpGrad(wuvec, is_cross=False)
+        sparse_grad = ImageViewer.sparseGrad(shape)
+        sgx, sgy = ImageViewer.sparseGrad(shape, interleave=False)
+        hxx = sgx.transpose() @ sgx
+        hyy = sgy.transpose() @ sgy
+        hxy = sgx @ sgy
+        # print("sgx", sgx.shape, "hxx", hxx.shape, "hxy", hxy.shape)
+
+        # print("grad", sparse_grad.shape, "hess", sparse_hess.shape)
+        # sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*sparse_grad, sparse_umb))
+        # sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*hxx, smoothing_weight*hyy, smoothing_weight*hxy, sparse_umb))
+        sparse_all = sparse.vstack((icw*sparse_u_dot_g, cross_weight*sparse_u_cross_g, smoothing_weight*hxx, smoothing_weight*hyy))
+
+        A = sparse_all
+        # print("A", A.shape, A.dtype)
+
+        b = np.zeros((A.shape[0]), dtype=np.float64)
+        # NOTE multiplication by decimation factor
+        b[:y0.size] = 1.*coh.flatten()*decimation*icw
+        x = self.solveAxEqb(A, b)
+        out = x.reshape(y0.shape)
+        # print("out", out.shape, out.min(), out.max())
+        if decimation > 1:
+            out = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
         return out
 
     def solveX0(self, basew, smoothing_weight):
@@ -493,7 +700,7 @@ class ImageViewer(QLabel):
         # print("A", A.shape, A.dtype)
 
         b = np.zeros((A.shape[0]), dtype=np.float64)
-        b[:basew.size] = 1.*coh.flatten()*decimation
+        b[:basew.size] = -1.*coh.flatten()*decimation
         b[basew.size:] = 0.
         x = self.solveAxEqb(A, b)
         out = x.reshape(basew.shape)
@@ -720,6 +927,12 @@ class ImageViewer(QLabel):
         no = Overlay.findNextItem(self.overlays, name)
         self.makeOverlayCurrent(no)
 
+    def getPrevOverlay(self):
+        name = self.overlay_name
+
+        no = Overlay.findPrevItem(self.overlays, name)
+        self.makeOverlayCurrent(no)
+
     def makeOverlayCurrent(self, overlay):
         self.saveCurrentOverlay()
         self.overlay_data = overlay.data
@@ -743,6 +956,9 @@ class ImageViewer(QLabel):
         elif e.key() == Qt.Key_A:
             self.getNextOverlay()
             self.drawAll()
+        elif e.key() == Qt.Key_Q:
+            self.getPrevOverlay()
+            self.drawAll()
 
 class Overlay():
     def __init__(self, name, data, maxrad, colormap="viridis", interpolation="linear", alpha=None, scale=None):
@@ -762,6 +978,13 @@ class Overlay():
         return -1
 
     @staticmethod
+    def findItemByName(overlays, name):
+        index = Overlay.findIndexByName(overlays, name)
+        if index < 0:
+            return None
+        return overlays[index]
+
+    @staticmethod
     def findNextItem(overlays, cur_name):
         index = Overlay.findIndexByName(overlays, cur_name)
         if index < 0:
@@ -769,11 +992,11 @@ class Overlay():
         return overlays[(index+1)%len(overlays)]
 
     @staticmethod
-    def findItemByName(overlays, name):
-        index = Overlay.findIndexByName(overlays, name)
+    def findPrevItem(overlays, cur_name):
+        index = Overlay.findIndexByName(overlays, cur_name)
         if index < 0:
-            return None
-        return overlays[index]
+            return overlays[0]
+        return overlays[(index+len(overlays)-1)%len(overlays)]
 
 class Tinter():
 
@@ -843,5 +1066,10 @@ if __name__ == '__main__':
     tinter = Tinter(app, parsed_args)
     sys.exit(app.exec())
 
+    # y0, x0, h, w = 924, 1632, 500, 500
+    # data = tifffile.imread('./evol2/02000.tif')
+    # data = data[y0:y0+h, x0:x0+w]
+
+    # tifffile.imwrite(f'./evol3/02000_x{x0}_y{y0}.tif', data)
 
 
