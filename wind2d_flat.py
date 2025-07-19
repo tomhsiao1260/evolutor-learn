@@ -28,6 +28,7 @@ from PyQt5.QtGui import (
 import numpy as np
 import cmap
 import tifffile
+import nrrd
 
 class MainWindow(QMainWindow):
 
@@ -475,25 +476,6 @@ class ImageViewer(QLabel):
         y1 -= np.min(y1)
         y1 /= np.max(y1)
 
-        # find which locations in the image have
-        # high coherency and a low radius
-        cargs = np.argsort(coh.flatten())
-        min_coh = coh.flatten()[cargs[len(cargs)//4]]
-        rargs = np.argsort(y1.flatten())
-        max_y1 = y1.flatten()[rargs[len(rargs)//4]]
-
-        crb = np.logical_and(coh > min_coh, y1 < max_y1)
-        crb = np.logical_and(crb, iys > 0)
-        rs = iys[crb]
-        r1s = iys[crb]
-        # using the locations found above, find the average
-        # ratio between r1 (pre-deformation radius) and
-        # current radius.
-        mr1r = np.median(r1s/rs)
-        print("mr1r", mr1r)
-        # apply this ratio as a correction to r1
-        y1 /= mr1r
-
         self.overlay_data = y1
         self.overlay_name = "y1"
         self.overlay_colormap = "tab20"
@@ -502,8 +484,14 @@ class ImageViewer(QLabel):
 
         self.setOverlayByName("y1")
 
-        smoothing_weight = .1
-        x0 = self.solveX0(ixs, smoothing_weight)
+        dot_weight = .001
+        smoothing_weight = .4
+        theta_weight = .0001
+
+        x0uvec, x0coh = self.synthesizeUVecArray(y1)
+
+        x0 = self.solveX0(y1, x0uvec, x0coh, dot_weight, smoothing_weight, theta_weight)
+        # x0 = self.solveX0_(ixs, smoothing_weight)
         x0 -= np.min(x0)
         x0 /= np.max(x0)
 
@@ -559,6 +547,9 @@ class ImageViewer(QLabel):
         self.overlay_scale = scale
         self.saveCurrentOverlay()
 
+        nrrd.write('./evol3/x.nrrd', x0)
+        nrrd.write('./evol3/y.nrrd', y1)
+
     def warpImage(self, target, srcd, destd, scale):
         ishape = target.shape
         # xform = PiecewiseAffineTransform()
@@ -596,6 +587,39 @@ class ImageViewer(QLabel):
         # Replace vector interpolator by simple interpolator
         st.vector_u_interpolator = ST.createInterpolator(st.vector_u)
         st.vector_v_interpolator = ST.createInterpolator(st.vector_v)
+
+    # given a radius array, create u vectors from the
+    # normalized gradients of that array.
+    def synthesizeUVecArray(self, rad):
+        gradx, grady = self.computeGrad(rad)
+        uvec = np.stack((gradx, grady), axis=2)
+        # print("suvec", uvec.shape)
+        luvec = np.sqrt((uvec*uvec).sum(axis=2))
+        lnz = luvec != 0
+        # print("ll", uvec.shape, luvec.shape, lnz.shape)
+        uvec[lnz] /= luvec[lnz][:,np.newaxis]
+        coh = np.full(rad.shape, 1.)
+        coh[:,-1] = 0
+        coh[-1,:] = 0
+        return uvec, coh
+
+    def computeGrad(self, arr):
+        decimation = self.decimation
+        oldshape = arr.shape
+        if decimation > 1:
+            arr = arr.copy()[::decimation, ::decimation]
+        shape = arr.shape
+        sparse_grad = ImageViewer.sparseGrad(shape)
+
+        # NOTE division by decimation
+        grad_flat = (sparse_grad @ arr.flatten()) / decimation
+        grad = grad_flat.reshape(shape[0], shape[1], 2)
+        gradx = grad[:,:,0]
+        grady = grad[:,:,1]
+        if decimation > 1:
+            gradx = cv2.resize(gradx, (oldshape[1], oldshape[0]), interpolation=cv2.INTER_LINEAR)
+            grady = cv2.resize(grady, (oldshape[1], oldshape[0]), interpolation=cv2.INTER_LINEAR)
+        return gradx, grady
 
     def solveY0(self, basew, smoothing_weight):
         st = self.main_window.st
@@ -678,7 +702,7 @@ class ImageViewer(QLabel):
             out = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
         return out
 
-    def solveX0(self, basew, smoothing_weight):
+    def solveX0_(self, basew, smoothing_weight):
         st = self.main_window.st
         decimation = self.decimation
         print("x0 smoothing", smoothing_weight)
@@ -709,6 +733,75 @@ class ImageViewer(QLabel):
         if decimation > 1:
             out = cv2.resize(out, (vecu.shape[1], vecu.shape[0]), interpolation=cv2.INTER_LINEAR)
         return out
+
+    def solveX0(self, rad, uvec, coh, dot_weight, smoothing_weight, theta_weight):
+        print("theta dot_weight", dot_weight, "smoothing", smoothing_weight, "theta_weight", theta_weight)
+        st = self.main_window.st
+        decimation = self.decimation
+        # print("decimation", decimation)
+
+        theta, _ = self.createXYArray()
+        oldshape = rad.shape
+        coh = coh[:,:,np.newaxis]
+        weight = coh.copy()
+        # TODO: for testing only!
+        # mask = self.createMask()
+        # coh *= mask
+        # weight = coh*coh*coh
+        # weight[:,:] = 1.
+        wuvec = weight*uvec
+        rwuvec = wuvec
+        # rwuvec = rad[:,:,np.newaxis]*wuvec
+        if decimation > 1:
+            wuvec = wuvec[::decimation, ::decimation, :]
+            theta = theta[::decimation, ::decimation]
+            weight = weight[::decimation, ::decimation, :]
+            # Note that rad is divided by decimation
+            rad = rad.copy()[::decimation, ::decimation] / decimation
+            # recompute rwuvec to account for change in rad
+            rwuvec = rwuvec[::decimation, ::decimation, :]
+            # rwuvec = rad[:,:,np.newaxis]*wuvec
+        shape = theta.shape
+        sparse_grad = ImageViewer.sparseGrad(shape)
+        # sparse_grad = ImageViewer.sparseGrad(shape, rad)
+        sparse_u_cross_g = ImageViewer.sparseVecOpGrad(rwuvec, is_cross=True)
+        sparse_u_dot_g = ImageViewer.sparseVecOpGrad(rwuvec, is_cross=False)
+        sparse_theta = ImageViewer.sparseDiagonal(shape)
+        # sparse_all = sparse.vstack((sparse_u_cross_g, dot_weight*sparse_u_dot_g, smoothing_weight*sparse_grad, theta_weight*sparse_theta))
+        sparse_all = sparse.vstack((sparse_u_cross_g, smoothing_weight*sparse_grad))
+        # print("sparse_all", sparse_all.shape)
+
+        # umb = np.array(self.umb)
+        # decimated_umb = umb/decimation
+        # iumb = decimated_umb.astype(np.int32)
+        # # bc: branch cut
+        # bc_rad = rad[iumb[1], :iumb[0]]
+        # bc_rwuvec = rwuvec[iumb[1], :iumb[0]]
+        # bc_dot = 2*np.pi*bc_rwuvec[:,1]
+        # bc_grad = 2*np.pi*bc_rad
+        # bc_cross = 2*np.pi*bc_rwuvec[:,0]
+        # bc_f0 = shape[1]*iumb[1]
+        # bc_f1 = bc_f0 + iumb[0]
+
+        b_dot = np.zeros((sparse_u_dot_g.shape[0]), dtype=np.float64)
+        # b_dot[bc_f0:bc_f1] += bc_dot.flatten()
+        b_cross = weight.flatten()
+        # b_cross[bc_f0:bc_f1] += bc_cross.flatten()
+        b_grad = np.zeros((sparse_grad.shape[0]), dtype=np.float64)
+        # b_grad[2*bc_f0+1:2*bc_f1+1:2] += bc_grad.flatten()
+        b_theta = theta.flatten()
+        # b_all = np.concatenate((b_cross, dot_weight*b_dot, smoothing_weight*b_grad, theta_weight*b_theta))
+        b_all = np.concatenate((b_cross, smoothing_weight*b_grad))
+        # print("b_all", b_all.shape)
+
+        x = self.solveAxEqb(sparse_all, b_all)
+        out = x.reshape(shape)
+        # print("out", out.shape, out.min(), out.max())
+        if decimation > 1:
+            outl = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
+            outn = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # return outl,outn
+        return outl
 
     # set is_cross True if op is cross product, False if
     # op is dot product
@@ -894,6 +987,14 @@ class ImageViewer(QLabel):
             return sparse_grad_x, sparse_grad_y
 
     @staticmethod
+    def sparseDiagonal(shape):
+        nrf, ncf = shape
+        ix = np.arange(nrf*ncf)
+        ones = np.full((nrf*ncf), 1.)
+        sparse_diag = sparse.coo_array((ones, (ix, ix)), shape=(nrf*ncf, nrf*ncf))
+        return sparse_diag
+
+    @staticmethod
     def solveAxEqb(A, b):
         print("solving Ax = b", A.shape, b.shape)
         At = A.transpose()
@@ -1066,7 +1167,7 @@ if __name__ == '__main__':
     tinter = Tinter(app, parsed_args)
     sys.exit(app.exec())
 
-    # y0, x0, h, w = 924, 1632, 500, 500
+    # y0, x0, h, w = 2436, 1924, 500, 500
     # data = tifffile.imread('./evol2/02000.tif')
     # data = data[y0:y0+h, x0:x0+w]
 
