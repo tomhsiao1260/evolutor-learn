@@ -1,3 +1,4 @@
+
 import sys
 import cv2
 import argparse
@@ -28,7 +29,6 @@ from PyQt5.QtGui import (
 import numpy as np
 import cmap
 import tifffile
-import nrrd
 
 class MainWindow(QMainWindow):
 
@@ -508,32 +508,6 @@ class ImageViewer(QLabel):
         srcd = np.stack([ix, iy], axis=-1)[::deci, ::deci].reshape(-1, 2)
         destd = np.stack([x0 * w, y1 * h], axis=-1)[::deci, ::deci].reshape(-1, 2)
 
-        # scale = 1.
-        # oy1 = self.warpImage(y1, srcd, destd, scale)
-        # print("finished y warping")
-
-        # self.overlay_data = oy1
-        # self.overlay_name = "y warped"
-        # self.overlay_colormap = "tab20"
-        # self.overlay_interpolation = "nearest"
-        # self.overlay_maxrad = 1.
-        # self.overlay_alpha = 1.
-        # self.overlay_scale = scale
-        # self.saveCurrentOverlay()
-
-        # scale = 1.
-        # ox1 = self.warpImage(x0, srcd, destd, scale)
-        # print("finished x warping")
-
-        # self.overlay_data = ox1
-        # self.overlay_name = "x warped"
-        # self.overlay_colormap = "tab20"
-        # self.overlay_interpolation = "nearest"
-        # self.overlay_maxrad = 1.
-        # self.overlay_alpha = 1.
-        # self.overlay_scale = scale
-        # self.saveCurrentOverlay()
-
         scale = 1.
         oim = self.warpImage(self.image, srcd, destd, scale)
         print("finished warping")
@@ -546,9 +520,6 @@ class ImageViewer(QLabel):
         self.overlay_alpha = 1.
         self.overlay_scale = scale
         self.saveCurrentOverlay()
-
-        nrrd.write('./evol3/x.nrrd', x0)
-        nrrd.write('./evol3/y.nrrd', y1)
 
     def warpImage(self, target, srcd, destd, scale):
         ishape = target.shape
@@ -800,6 +771,8 @@ class ImageViewer(QLabel):
         if decimation > 1:
             outl = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
             outn = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_NEAREST)
+        else:
+            outl = out
         # return outl,outn
         return outl
 
@@ -1166,11 +1139,3 @@ if __name__ == '__main__':
 
     tinter = Tinter(app, parsed_args)
     sys.exit(app.exec())
-
-    # y0, x0, h, w = 2436, 1924, 500, 500
-    # data = tifffile.imread('./evol2/02000.tif')
-    # data = data[y0:y0+h, x0:x0+w]
-
-    # tifffile.imwrite(f'./evol3/02000_x{x0}_y{y0}.tif', data)
-
-

@@ -28,6 +28,7 @@ from PyQt5.QtGui import (
 import cv2
 import numpy as np
 import cmap
+import nrrd
 
 class MainWindow(QMainWindow):
 
@@ -595,6 +596,17 @@ class ImageViewer(QLabel):
 
         self.setOverlayByName("theta1")
 
+        rad = rad1.copy()
+        rad -= np.min(rad)
+        rad /= np.max(rad)
+
+        theta = theta1.copy()
+        theta -= np.min(theta)
+        theta /= np.max(theta)
+
+        nrrd.write('./evol2/x.nrrd', rad)
+        nrrd.write('./evol2/y.nrrd', theta)
+
         rad = self.createRadiusArray()
         theta = self.createThetaArray()
 
@@ -858,6 +870,8 @@ class ImageViewer(QLabel):
         if decimation > 1:
             outl = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_LINEAR)
             outn = cv2.resize(out, (uvec.shape[1], uvec.shape[0]), interpolation=cv2.INTER_NEAREST)
+        else:
+            outl = out
         # return outl,outn
         return outl
 
