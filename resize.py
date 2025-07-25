@@ -45,3 +45,9 @@ if __name__ == '__main__':
     data = tifffile.imread('./evol2/02000_s2.tif')
     tifffile.imwrite(f'./evol2/02000_s2_x{x0}_y{y0}.tif', data[y0:y0+500, x0:x0+500])
 
+    # y0, x0, h, w = 924, 1632, 500, 500
+    # data = tifffile.imread('./evol2/02000.tif')
+    # data = data[y0:y0+h, x0:x0+w]
+
+    # tifffile.imwrite(f'./evol3/02000_x{x0}_y{y0}.tif', data)
+
