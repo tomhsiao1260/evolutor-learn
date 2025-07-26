@@ -1,4 +1,4 @@
-
+import os
 import sys
 import cv2
 import argparse
@@ -29,6 +29,7 @@ from PyQt5.QtGui import (
 import numpy as np
 import cmap
 import tifffile
+import zarr
 
 class MainWindow(QMainWindow):
 
@@ -47,43 +48,41 @@ class MainWindow(QMainWindow):
 
         no_cache = parsed_args.no_cache
         self.viewer.no_cache = no_cache
-        tifname = pathlib.Path(parsed_args.input_tif)
-        cache_dir = parsed_args.cache_dir
         decimation = parsed_args.decimation
         self.viewer.decimation = decimation
         umbstr = parsed_args.umbilicus
         window_width = parsed_args.window
         maxrad = parsed_args.maxrad
 
-        if cache_dir is None:
-            cache_dir = tifname.parent
-        else:
-            cache_dir = pathlib.Path(cache_dir)
-        cache_file_base = cache_dir / tifname.stem
-        self.viewer.cache_dir = cache_dir
-        self.viewer.cache_file_base = cache_file_base
-        # nrrdname = cache_dir / (tifname.with_suffix(".nrrd")).name
+        self.viewer.input_ome_zarr = pathlib.Path(parsed_args.input_ome_zarr)
+        self.viewer.level = parsed_args.level
 
-        print("loading tif", tifname)
-        self.viewer.loadTIFF(tifname)
+        yx_coord = parsed_args.yx_coord
+        if yx_coord is not None:
+            words = yx_coord.split(',')
+            if len(words) != 2:
+                print("Could not parse --yx_coord argument")
+            else:
+                self.viewer.yx_coord = np.array((int(words[0]),int(words[1])))
+
+        hw_size = parsed_args.hw_size
+        if hw_size is not None:
+            words = hw_size.split(',')
+            if len(words) != 2:
+                print("Could not parse --hw_size argument")
+            else:
+                self.viewer.hw_size = np.array((int(words[0]),int(words[1])))
+
+        print("loading tif", self.viewer.input_ome_zarr)
+        self.viewer.loadTIFF()
 
         self.viewer.overlay_maxrad = maxrad
         self.viewer.warp_decimation = parsed_args.warp_decimation
 
         self.st = ST(self.viewer.image)
 
-        part = "_e.nrrd"
-        if decimation is not None and decimation > 1:
-            part = "_d%d%s"%(decimation, part)
-        if window_width is not None:
-            part = "_w%d%s"%(window_width, part)
-        nrrdname = cache_file_base.with_name(cache_file_base.name + part)
-        if no_cache:
-            print("computing structural tensors")
-            self.st.computeEigens()
-        else:
-            print("computing/loading structural tensors")
-            self.st.loadOrCreateEigens(nrrdname)
+        print("computing structural tensors")
+        self.st.computeEigens()
 
         self.viewer.drawAll()
 
@@ -178,15 +177,21 @@ class ImageViewer(QLabel):
         self.src_dots = None
         self.dest_dots = None
 
-    def loadTIFF(self, fname):
+    def loadTIFF(self):
         try:
-            image = cv2.imread(str(fname), cv2.IMREAD_UNCHANGED).astype(np.float64)
+            level = self.level
+            y0, x0 = self.yx_coord
+            h, w = self.hw_size
+
+            store = zarr.open(self.input_ome_zarr, mode='r')
+
+            image = store[level][0, y0:y0+h, x0:x0+w]
+            image = np.array(image).astype(np.float64)
             image /= 65535.
         except Exception as e:
-            print("Error while loading",fname,e)
+            print("Error while loading",self.input_ome_zarr,e)
             return
         self.image = image
-        self.image_mtime = fname.stat().st_mtime
         self.setDefaults()
         self.drawAll()
 
@@ -520,6 +525,49 @@ class ImageViewer(QLabel):
         self.overlay_alpha = 1.
         self.overlay_scale = scale
         self.saveCurrentOverlay()
+
+        self.saveWarpCoord(x0, y1)
+
+    def saveWarpCoord(self, u_coord, v_coord):
+        p, level = self.input_ome_zarr, self.level
+        y0, x0 = self.yx_coord
+        h, w = self.hw_size
+
+        u_coord_dir = os.path.join(p.parent, f"{p.stem}_u.zarr", str(level))
+        v_coord_dir = os.path.join(p.parent, f"{p.stem}_v.zarr", str(level))
+
+        u_store = zarr.NestedDirectoryStore(u_coord_dir)
+        u_zarr = zarr.open(
+                store=u_store, 
+                shape=(1, self.divp1(7888,2), self.divp1(8096,2)), 
+                chunks=(1, 128, 128),
+                dtype = 'uint16',
+                write_empty_chunks=False,
+                fill_value=0,
+                compressor=None,
+                mode='w', 
+                )
+
+        v_store = zarr.NestedDirectoryStore(v_coord_dir)
+        v_zarr = zarr.open(
+                store=v_store, 
+                shape=(1, self.divp1(7888,2), self.divp1(8096,2)), 
+                chunks=(1, 128, 128),
+                dtype = 'uint16',
+                write_empty_chunks=False,
+                fill_value=0,
+                compressor=None,
+                mode='w',
+                )
+
+        u_zarr[0, y0:y0+h, x0:x0+w] = (u_coord * 65535).astype('uint16')
+        v_zarr[0, y0:y0+h, x0:x0+w] = (v_coord * 65535).astype('uint16')
+
+    def divp1(self, s, c):
+        n = s // c
+        if s%c > 0:
+            n += 1
+        return n
 
     def warpImage(self, target, srcd, destd, scale):
         ishape = target.shape
@@ -1086,8 +1134,20 @@ def process_cl_args():
     parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
             description="Test determining winding numbers using structural tensors")
-    parser.add_argument("input_tif",
-                        help="input tiff slice")
+    parser.add_argument("input_ome_zarr",
+                        help="input ome zarr directory")
+    parser.add_argument("--level",
+                        type=int,
+                        default=0,
+                        help="level in ome zarr")
+    parser.add_argument("--yx_coord",
+                        type=str,
+                        default='0,0',
+                        help="chunk minimium coordinate y, x")
+    parser.add_argument("--hw_size",
+                        type=str,
+                        default='128,128',
+                        help="chunk height, width")
     parser.add_argument("--cache_dir",
                         default=None,
                         help="directory where the cache of the structural tensor data is or will be stored; if not given, directory of input tiff slice is used")
@@ -1131,7 +1191,7 @@ def process_cl_args():
     parsed_args = parser.parse_args()
     return parsed_args
 
-# python wind2d_flat.py ./evol3/cell_yxz_006_008_004.tif
+# python wind2d_flat.py ./evol2/scroll.zarr --level 2 --yx_coord 896,896 --hw_size 128,128
 if __name__ == '__main__':
     parsed_args = process_cl_args()
     qt_args = sys.argv[:1]

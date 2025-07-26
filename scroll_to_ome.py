@@ -1,5 +1,7 @@
 import sys
 import zarr
+import copy
+import json
 import tifffile
 import argparse
 import numpy as np
@@ -8,6 +10,72 @@ from pathlib import Path
 import skimage.transform
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import cpu_count
+
+# return None if succeeds, err string if fails
+def create_ome_dir(zarrdir):
+    # complain if directory already exists
+    if zarrdir.exists():
+        err = "Directory %s already exists"%zarrdir
+        print(err)
+        return err
+
+    try:
+        zarrdir.mkdir()
+    except Exception as e:
+        err = "Error while creating %s: %s"%(zarrdir, e)
+        print(err)
+        return err
+
+def create_ome_headers(zarrdir, nlevels):
+    zattrs_dict = {
+        "multiscales": [
+            {
+                "axes": [
+                    {
+                        "name": "z",
+                        "type": "space"
+                    },
+                    {
+                        "name": "y",
+                        "type": "space"
+                    },
+                    {
+                        "name": "x",
+                        "type": "space"
+                    }
+                ],
+                "datasets": [],
+                "name": "/",
+                "version": "0.4"
+            }
+        ]
+    }
+
+    dataset_dict = {
+        "coordinateTransformations": [
+            {
+                "scale": [
+                ],
+                "type": "scale"
+            }
+        ],
+        "path": ""
+    }
+    
+    zgroup_dict = { "zarr_format": 2 }
+
+    datasets = []
+    for l in range(nlevels):
+        ds = copy.deepcopy(dataset_dict)
+        ds["path"] = "%d"%l
+        scale = 2.**l
+        ds["coordinateTransformations"][0]["scale"] = [scale]*3
+        # print(json.dumps(ds, indent=4))
+        datasets.append(ds)
+    zad = copy.deepcopy(zattrs_dict)
+    zad["multiscales"][0]["datasets"] = datasets
+    json.dump(zgroup_dict, (zarrdir / ".zgroup").open("w"), indent=4)
+    json.dump(zad, (zarrdir / ".zattrs").open("w"), indent=4)
 
 def tifs2zarr(tiffdir, zarrdir, chunk_size, obytes=0, slices=None, maxgb=None):
     tiff0 = tifffile.imread(tiffdir)
@@ -113,7 +181,7 @@ def main():
             "output_zarr_ome_dir", 
             help="Name of directory that will contain OME/zarr datastore")
     parser.add_argument(
-            "--chunk_size", 
+            "--chunk_size",
             type=int, 
             default=128, 
             help="Size of chunk")
@@ -176,6 +244,17 @@ def main():
     first_new_level = args.first_new_level
     if first_new_level is not None and first_new_level < 1:
         print("first_new_level must be at least 1")
+
+    if first_new_level is None:
+        err = create_ome_dir(zarrdir)
+        if err is not None:
+            print("error returned:", err)
+            return 1
+
+    err = create_ome_headers(zarrdir, nlevels)
+    if err is not None:
+        print("error returned:", err)
+        return 1
 
     print("Creating level 0")
     err = tifs2zarr(tiffdir, zarrdir/"0", chunk_size)
