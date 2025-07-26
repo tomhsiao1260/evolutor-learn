@@ -545,7 +545,7 @@ class ImageViewer(QLabel):
                 write_empty_chunks=False,
                 fill_value=0,
                 compressor=None,
-                mode='w', 
+                mode='a', 
                 )
 
         v_store = zarr.NestedDirectoryStore(v_coord_dir)
@@ -557,7 +557,7 @@ class ImageViewer(QLabel):
                 write_empty_chunks=False,
                 fill_value=0,
                 compressor=None,
-                mode='w',
+                mode='a',
                 )
 
         u_zarr[0, y0:y0+h, x0:x0+w] = (u_coord * 65535).astype('uint16')
